@@ -31,8 +31,8 @@ def get_current_schedule(start_date: str, end_date: str) -> List[Dict[str, Any]]
         cursor.execute("""
             SELECT id, title, description, start_time, end_time, energy_level, constraint_type, status 
             FROM tasks 
-            WHERE (start_time >= ? AND start_time <= ?) OR (end_time >= ? AND end_time <= ?)
-        """, (start_date, end_date, start_date, end_date))
+            WHERE start_time <= ? AND end_time >= ?
+        """, (end_date, start_date))
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
     except Exception as e:
@@ -496,8 +496,22 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = []) 
     Appends '<|think|>' token to prompt to force deep-reasoning mode.
     Correctly supports sequential, recursive multi-turn tool calling up to max_depth of 5.
     """
+    import datetime
+    tz_offset = datetime.datetime.now().astimezone().strftime('%z')
+    if not tz_offset or len(tz_offset) < 5:
+        tz_offset = "+0000"
+    tz_formatted = f"UTC{tz_offset[:3]}:{tz_offset[3:]}"
+    tz_suffix = f"{tz_offset[:3]}:{tz_offset[3:]}"
     current_time_str = time.strftime("%A, %B %d, %Y, %I:%M %p %Z")
-    dynamic_system_prompt = SYSTEM_PROMPT + f"\n\nCURRENT DATE-TIME CONTEXT:\n- Today's date and time: {current_time_str}\n- Ensure all new tasks created use the correct year, month, and day matching the current context unless a future date is explicitly requested.\n"
+    
+    dynamic_system_prompt = (
+        SYSTEM_PROMPT + 
+        f"\n\nCURRENT DATE-TIME CONTEXT:\n"
+        f"- Today's date and time: {current_time_str} ({tz_formatted})\n"
+        f"- User Timezone: {tz_formatted}\n"
+        f"- Ensure all new tasks created use the correct year, month, and day matching the current context unless a future date is explicitly requested.\n"
+        f"- Timezone Guideline: You MUST specify task start_time and end_time ISO strings using the same timezone offset suffix as the user's timezone ({tz_suffix}) instead of defaulting to UTC 'Z' (unless the user's timezone is UTC itself). This ensures scheduled blocks appear at the correct local hour on the user's timeline interface.\n"
+    )
     
     messages = [{"role": "system", "content": dynamic_system_prompt}]
     for msg in chat_history:

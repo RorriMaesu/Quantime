@@ -197,8 +197,9 @@ export default function App() {
       const year = currentDate.getFullYear();
       const month = currentDate.getMonth();
       
-      const startIso = new Date(Date.UTC(year, month, 1, 0, 0, 0)).toISOString();
-      const endIso = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59)).toISOString();
+      // Pad by 2 days on either side to capture tasks offset by timezone differences
+      const startIso = new Date(Date.UTC(year, month, 1 - 2, 0, 0, 0)).toISOString();
+      const endIso = new Date(Date.UTC(year, month + 1, 0 + 2, 23, 59, 59)).toISOString();
       
       const resp = await fetch(`${API_BASE}/api/tasks?start_date=${startIso}&end_date=${endIso}`);
       if (resp.ok) {
