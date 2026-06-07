@@ -827,6 +827,16 @@ export default function App() {
       
       const reg = await navigator.serviceWorker.ready;
       
+      try {
+        const oldSub = await reg.pushManager.getSubscription();
+        if (oldSub) {
+          await oldSub.unsubscribe();
+          console.log("Unsubscribed from previous push subscription keys to avoid mismatch.");
+        }
+      } catch (e) {
+        console.warn("Error checking or unsubscribing from old subscription:", e);
+      }
+      
       const keyResp = await fetch(`/api/notifications/vapid-public-key`);
       if (!keyResp.ok) throw new Error("Failed to get public VAPID key");
       const { publicKey } = await keyResp.json();
