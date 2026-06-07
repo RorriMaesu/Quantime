@@ -343,12 +343,251 @@ class CredentialsSchema(BaseModel):
     auth_uri: str = "https://accounts.google.com/o/oauth2/auth"
     token_uri: str = "https://oauth2.googleapis.com/token"
 
+# Global state for tracking model download and compilation progress
+pull_progress = {
+    "status": "idle", # "idle", "pulling", "creating", "completed", "failed"
+    "completed": 0,
+    "total": 0,
+    "percent": 0.0,
+    "detail": ""
+}
+
+def get_gpu_metadata():
+    import subprocess
+    gpu_name = "CPU Only / Unknown"
+    vram_gb = 0.0
+    
+    # 1. Try running nvidia-smi
+    try:
+        smi_mem = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+        )
+        smi_name = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+        )
+        if smi_mem and smi_name:
+            vram_mb = float(smi_mem.decode("utf-8").strip())
+            vram_gb = round(vram_mb / 1024.0, 1)
+            gpu_name = smi_name.decode("utf-8").strip()
+            return {"name": gpu_name, "vram": vram_gb}
+    except Exception:
+        pass
+
+    # 2. Try running wmic on Windows
+    if os.name == 'nt':
+        try:
+            wmic_out = subprocess.check_output(
+                ["wmic", "path", "win32_videocontroller", "get", "AdapterRAM,Name", "/format:list"],
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            lines = wmic_out.decode("utf-8", errors="ignore").splitlines()
+            temp_name = ""
+            temp_ram = 0
+            for line in lines:
+                if line.startswith("Name="):
+                    temp_name = line.split("=", 1)[1].strip()
+                elif line.startswith("AdapterRAM="):
+                    ram_val = line.split("=", 1)[1].strip()
+                    if ram_val.isdigit():
+                        temp_ram = int(ram_val)
+            
+            if temp_name:
+                gpu_name = temp_name
+                if temp_ram > 0:
+                    vram_gb = round(temp_ram / (1024**3), 1)
+                
+                # Apply wrap-around heuristic workaround
+                if "RTX 5060" in gpu_name:
+                    vram_gb = 16.0
+                elif "RTX 5070" in gpu_name:
+                    vram_gb = 12.0
+                elif "RTX 5080" in gpu_name:
+                    vram_gb = 16.0
+                elif "RTX 5090" in gpu_name:
+                    vram_gb = 24.0
+                elif "RTX 4090" in gpu_name:
+                    vram_gb = 24.0
+                elif "RTX 4080" in gpu_name:
+                    vram_gb = 16.0
+                elif "RTX 4070" in gpu_name:
+                    vram_gb = 12.0
+                elif "RTX 3090" in gpu_name:
+                    vram_gb = 24.0
+                elif "RTX 3080" in gpu_name:
+                    vram_gb = 10.0
+                elif "RTX 3060" in gpu_name:
+                    vram_gb = 12.0
+        except Exception:
+            pass
+
+    return {"name": gpu_name, "vram": vram_gb}
+
+def run_model_setup_background(model_tag: str):
+    global pull_progress
+    pull_progress = {
+        "status": "pulling",
+        "completed": 0,
+        "total": 0,
+        "percent": 0.0,
+        "detail": f"Initializing pull for {model_tag}..."
+    }
+    
+    try:
+        # 1. Update Modelfile
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        modelfile_path = os.path.join(base_dir, "Modelfile")
+        if os.path.exists(modelfile_path):
+            with open(modelfile_path, "r") as f:
+                content = f.read()
+            new_lines = []
+            replaced = False
+            for line in content.splitlines():
+                if line.startswith("FROM "):
+                    new_lines.append(f"FROM {model_tag}")
+                    replaced = True
+                else:
+                    new_lines.append(line)
+            if not replaced:
+                new_lines.insert(0, f"FROM {model_tag}")
+            with open(modelfile_path, "w") as f:
+                f.write("\n".join(new_lines) + "\n")
+        
+        # 2. Pull model via local Ollama API
+        import urllib.request
+        import json
+        
+        pull_url = "http://localhost:11434/api/pull"
+        payload = {"name": model_tag, "stream": True}
+        
+        req = urllib.request.Request(
+            pull_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        
+        with urllib.request.urlopen(req) as resp:
+            for line in resp:
+                if not line:
+                    continue
+                data = json.loads(line.decode("utf-8"))
+                status_text = data.get("status", "")
+                completed = data.get("completed", 0)
+                total = data.get("total", 0)
+                
+                percent = 0.0
+                if total > 0:
+                    percent = round((completed / total) * 100, 1)
+                
+                pull_progress = {
+                    "status": "pulling",
+                    "completed": completed,
+                    "total": total,
+                    "percent": percent,
+                    "detail": f"Pulling weights: {status_text}"
+                }
+        
+        # 3. Create Custom Speculative decoding model
+        pull_progress["status"] = "creating"
+        pull_progress["detail"] = "Compiling speculative decoding gemma4-agent-mtp model..."
+        
+        import subprocess
+        cmd = ["ollama", "create", "gemma4-agent-mtp", "-f", modelfile_path]
+        
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+        )
+        
+        for stdout_line in iter(process.stdout.readline, ""):
+            pull_progress["detail"] = f"Compiling: {stdout_line.strip()}"
+            
+        process.stdout.close()
+        return_code = process.wait()
+        
+        if return_code == 0:
+            pull_progress = {
+                "status": "completed",
+                "completed": 1,
+                "total": 1,
+                "percent": 100.0,
+                "detail": "Successfully compiled speculative decoding agent gemma4-agent-mtp!"
+            }
+        else:
+            pull_progress = {
+                "status": "failed",
+                "completed": 0,
+                "total": 0,
+                "percent": 0.0,
+                "detail": f"Ollama model compilation failed with exit code {return_code}."
+            }
+            
+    except Exception as e:
+        logger.error(f"Error in model setup task: {e}")
+        pull_progress = {
+            "status": "failed",
+            "completed": 0,
+            "total": 0,
+            "percent": 0.0,
+            "detail": f"Setup failed: {str(e)}"
+        }
+
+class PullModelSchema(BaseModel):
+    model: str
+
+@app.get("/api/setup/hardware")
+def get_hardware_info():
+    """Queries and returns host GPU name and VRAM size."""
+    return get_gpu_metadata()
+
 @app.get("/api/setup/status")
 def get_setup_status():
-    """Checks if Google credentials.json is configured."""
+    """Checks configuration status including credentials and Ollama models."""
     from backend.google_client import CREDENTIALS_FILE
     has_credentials = os.path.exists(CREDENTIALS_FILE)
-    return {"has_credentials": has_credentials}
+    
+    # Check if custom model exists
+    has_model = False
+    try:
+        import urllib.request
+        import json
+        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3) as resp:
+            tags = json.loads(resp.read().decode("utf-8"))
+            for model in tags.get("models", []):
+                if "gemma4-agent-mtp" in model.get("name", ""):
+                    has_model = True
+                    break
+    except Exception:
+        pass
+        
+    return {
+        "has_credentials": has_credentials,
+        "has_model": has_model
+    }
+
+@app.post("/api/setup/pull-model")
+def pull_model_endpoint(payload: PullModelSchema, background_tasks: BackgroundTasks):
+    """Triggers background model download and custom agent compilation."""
+    global pull_progress
+    if pull_progress["status"] in ["pulling", "creating"]:
+        raise HTTPException(status_code=400, detail="A model setup task is already in progress.")
+        
+    background_tasks.add_task(run_model_setup_background, payload.model)
+    return {"status": "started"}
+
+@app.get("/api/setup/pull-status")
+def get_pull_status_endpoint():
+    """Returns the current model pull and compilation status."""
+    global pull_progress
+    return pull_progress
 
 @app.post("/api/setup/credentials")
 def save_setup_credentials(creds: CredentialsSchema):

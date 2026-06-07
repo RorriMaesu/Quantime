@@ -83,6 +83,12 @@ export default function App() {
   const [showMobileGuide, setShowMobileGuide] = useState(false);
   const [publicIp, setPublicIp] = useState("Loading...");
   const [hasCredentials, setHasCredentials] = useState(true);
+  const [hasModel, setHasModel] = useState(true);
+  const [gpuName, setGpuName] = useState("Scanning...");
+  const [gpuVram, setGpuVram] = useState(0);
+  const [selectedModel, setSelectedModel] = useState("gemma2:2b");
+  const [setupStep, setSetupStep] = useState("select"); // "select" or "progress"
+  const [pullProgress, setPullProgress] = useState({ status: "idle", percent: 0, detail: "" });
   const [setupClientId, setSetupClientId] = useState("");
   const [setupClientSecret, setSetupClientSecret] = useState("");
   const [setupProjectId, setSetupProjectId] = useState("");
@@ -182,6 +188,24 @@ export default function App() {
         if (resp.ok) {
           const data = await resp.json();
           setHasCredentials(data.has_credentials);
+          setHasModel(data.has_model);
+          
+          if (!data.has_model) {
+            // Fetch hardware information
+            const hwResp = await fetch(`/api/setup/hardware`);
+            if (hwResp.ok) {
+              const hwData = await hwResp.json();
+              setGpuName(hwData.name);
+              setGpuVram(hwData.vram);
+              if (hwData.vram >= 12.0) {
+                setSelectedModel("gemma4");
+              } else if (hwData.vram >= 8.0) {
+                setSelectedModel("gemma2:9b");
+              } else {
+                setSelectedModel("gemma2:2b");
+              }
+            }
+          }
         }
       } catch (e) {
         console.error("Failed to check credentials status", e);
@@ -356,6 +380,45 @@ export default function App() {
     }
   };
 
+  const handleStartModelSetup = async () => {
+    setSetupStep("progress");
+    try {
+      const resp = await fetch('/api/setup/pull-model', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: selectedModel })
+      });
+      if (resp.ok) {
+        // Start polling
+        const pollInterval = setInterval(async () => {
+          try {
+            const statusResp = await fetch('/api/setup/pull-status');
+            if (statusResp.ok) {
+              const statusData = await statusResp.json();
+              setPullProgress(statusData);
+              if (statusData.status === 'completed') {
+                clearInterval(pollInterval);
+                setHasModel(true);
+              } else if (statusData.status === 'failed') {
+                clearInterval(pollInterval);
+                alert(`Setup failed: ${statusData.detail}`);
+                setSetupStep("select");
+              }
+            }
+          } catch (e) {
+            console.error("Error checking setup progress", e);
+          }
+        }, 800);
+      } else {
+        alert("Failed to start model setup task.");
+        setSetupStep("select");
+      }
+    } catch (e) {
+      alert("Error starting model setup task.");
+      setSetupStep("select");
+    }
+  };
+
   const handleSendMessage = async (e) => {
     e.preventDefault();
     if (!inputMessage.trim()) return;
@@ -519,6 +582,141 @@ export default function App() {
   };
 
 
+
+  if (!hasModel) {
+    return (
+      <div className="flex items-center justify-center min-h-screen w-screen bg-gray-950 text-gray-100 p-4 font-sans select-none overflow-y-auto">
+        <div className="w-full max-w-2xl bg-gray-900/60 backdrop-blur-2xl border border-gray-800 rounded-3xl p-6 md:p-8 shadow-2xl relative overflow-hidden glow-indigo">
+          <div className="absolute top-0 right-0 w-80 h-80 bg-indigo-600/10 rounded-full blur-[100px] pointer-events-none"></div>
+          <div className="absolute bottom-0 left-0 w-80 h-80 bg-purple-600/10 rounded-full blur-[100px] pointer-events-none"></div>
+          
+          <div className="flex items-center space-x-3 mb-6">
+            <div className="h-12 w-12 rounded-2xl bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center glow-indigo">
+              <Sparkles className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-extrabold tracking-wide bg-gradient-to-r from-white via-gray-200 to-gray-400 bg-clip-text text-transparent">
+                Quantime Onboarding
+              </h1>
+              <p className="text-xs text-indigo-400 font-semibold uppercase tracking-wider">Local AI Setup Wizard</p>
+            </div>
+          </div>
+
+          {setupStep === "select" ? (
+            <div className="space-y-6 animate-slide">
+              <div className="glass-panel p-4 rounded-2xl border border-gray-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-sm font-bold text-gray-300">System Hardware Detected:</h3>
+                  <p className="text-xs text-indigo-300 font-mono mt-1">{gpuName}</p>
+                </div>
+                <div className="bg-indigo-950/60 border border-indigo-900/60 rounded-xl px-4 py-2 text-center md:text-right shrink-0">
+                  <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest block">Available VRAM</span>
+                  <span className="text-lg font-extrabold text-white font-mono">{gpuVram} GB</span>
+                </div>
+              </div>
+
+              <div>
+                <h2 className="text-base font-bold text-gray-200 mb-3 flex items-center space-x-1.5">
+                  <Zap className="h-4 w-4 text-indigo-400" />
+                  <span>Choose Your Scheduling Agent Model:</span>
+                </h2>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {[
+                    {
+                      id: "gemma4",
+                      name: "Gemma 4 12B",
+                      size: "Full Agent",
+                      vramReq: 12.0,
+                      desc: "Top-tier agent reasoning & Speculative decoding. Ideal for RTX 5060 Ti / 16GB VRAM."
+                    },
+                    {
+                      id: "gemma2:9b",
+                      name: "Gemma 2 9B",
+                      size: "Balanced Agent",
+                      vramReq: 8.0,
+                      desc: "Excellent capability-to-size ratio. Recommended for >= 8GB VRAM."
+                    },
+                    {
+                      id: "llama3:8b",
+                      name: "Llama 3 8B",
+                      size: "Llama Alternative",
+                      vramReq: 8.0,
+                      desc: "Popular alternative open-source model. Recommended for >= 8GB VRAM."
+                    },
+                    {
+                      id: "gemma2:2b",
+                      name: "Gemma 2 2B",
+                      size: "Lightweight CPU",
+                      vramReq: 0.0,
+                      desc: "Extremely fast execution, works on low-end systems & CPU-only modes."
+                    }
+                  ].map((m) => {
+                    const isRecommended = (gpuVram >= m.vramReq && (m.id === "gemma4" && gpuVram >= 12.0 || m.id === "gemma2:9b" && gpuVram >= 8.0 && gpuVram < 12.0 || m.id === "gemma2:2b" && gpuVram < 8.0));
+                    const isSelected = selectedModel === m.id;
+                    return (
+                      <div 
+                        key={m.id}
+                        onClick={() => setSelectedModel(m.id)}
+                        className={`cursor-pointer group relative rounded-2xl p-4 border transition-all duration-300 ${
+                          isSelected 
+                            ? 'bg-indigo-950/40 border-indigo-500/80 shadow-md shadow-indigo-950/50' 
+                            : 'bg-gray-900/40 border-gray-800 hover:border-gray-750 hover:bg-gray-900/60'
+                        }`}
+                      >
+                        {isRecommended && (
+                          <span className="absolute -top-2 -right-2 bg-gradient-to-r from-emerald-500 to-teal-500 text-[9px] font-extrabold text-black uppercase tracking-widest px-2 py-0.5 rounded-full shadow-md animate-pulse">
+                            Recommended
+                          </span>
+                        )}
+                        <div className="flex justify-between items-start mb-2">
+                          <h4 className="font-bold text-sm text-gray-200 group-hover:text-indigo-400 transition-colors">{m.name}</h4>
+                          <span className="text-[10px] bg-gray-950 border border-gray-800 text-indigo-400 font-bold px-2 py-0.5 rounded-md">{m.size}</span>
+                        </div>
+                        <p className="text-xs text-gray-400 leading-normal">{m.desc}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <button 
+                onClick={handleStartModelSetup}
+                className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold py-4 rounded-2xl shadow-lg shadow-indigo-950/60 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-sm flex items-center justify-center space-x-2"
+              >
+                <span>Initialize Agent & Download Weights</span>
+                <Plus className="h-4 w-4" />
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-6 text-center py-6 animate-slide">
+              <div className="relative inline-flex items-center justify-center mb-4">
+                <div className="w-24 h-24 rounded-full border-4 border-gray-800 flex items-center justify-center">
+                  <span className="text-xl font-extrabold font-mono text-white">{pullProgress.percent}%</span>
+                </div>
+                <div className="absolute inset-0 rounded-full border-4 border-indigo-500 animate-spin border-t-transparent border-r-transparent"></div>
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="text-base font-bold text-gray-200 capitalize">
+                  {pullProgress.status} Model Agent...
+                </h3>
+                <div className="w-full bg-gray-950 rounded-full h-2.5 overflow-hidden border border-gray-800 max-w-md mx-auto">
+                  <div 
+                    className="bg-gradient-to-r from-indigo-500 to-purple-500 h-full rounded-full transition-all duration-300 shadow-glow"
+                    style={{ width: `${pullProgress.percent}%` }}
+                  ></div>
+                </div>
+                <p className="text-xs text-gray-400 max-w-sm mx-auto font-mono mt-4 leading-relaxed bg-black/45 p-3 rounded-xl border border-gray-800 max-h-24 overflow-y-auto">
+                  {pullProgress.detail || "Waiting for download start..."}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col md:flex-row h-screen w-screen overflow-hidden pb-16 md:pb-0">
