@@ -12,8 +12,6 @@ OutputBaseFilename=QuantimeSetup
 Compression=lzma2/ultra64
 SolidCompression=yes
 PrivilegesRequired=admin
-SetupIconFile=frontend\public\logo512.ico
-UninstallDisplayIcon={app}\frontend\public\logo512.ico
 
 [Files]
 ; Copy all project files except ignored ones
@@ -21,7 +19,7 @@ Source: "*"; DestDir: "{app}"; Exclude: "backend\.venv\*;frontend\node_modules\*
 
 [Icons]
 Name: "{group}\Quantime"; Filename: "{app}\run_quantime_hidden.vbs"
-Name: "{commondesktop}\Quantime"; Filename: "{app}\run_quantime_hidden.vbs"; IconFilename: "{app}\frontend\public\logo512.ico"
+Name: "{commondesktop}\Quantime"; Filename: "{app}\run_quantime_hidden.vbs"
 
 [Run]
 ; Run the automated post-install script silently to setup Python, Node, Ollama, and LLMs
