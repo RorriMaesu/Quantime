@@ -741,7 +741,10 @@ export default function App() {
               <h1 className="text-2xl font-bold font-sans tracking-wide bg-gradient-to-r from-white via-gray-200 to-gray-400 bg-clip-text text-transparent">
                 Quantime
               </h1>
-              <p className="text-xs text-indigo-400 font-medium">Local-First Scheduling Engine</p>
+              <div className="flex items-center space-x-2">
+                <p className="text-xs text-indigo-400 font-medium">Local-First Scheduling Engine</p>
+                <span className="text-[10px] text-gray-500 font-mono bg-gray-900/60 px-1.5 py-0.5 rounded border border-gray-800">v2.6</span>
+              </div>
             </div>
           </div>
 
