@@ -102,6 +102,8 @@ export default function App() {
   // Voice Chat S2S states and refs
   const [isVoiceActive, setIsVoiceActive] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState("idle"); // 'idle', 'recording', 'thinking', 'speaking'
+  const [activeVoiceText, setActiveVoiceText] = useState("");
+  const [activeVoiceThoughts, setActiveVoiceThoughts] = useState("");
   const wsRef = useRef(null);
   const audioContextRef = useRef(null);
   const processorRef = useRef(null);
@@ -123,14 +125,22 @@ export default function App() {
         console.log("Voice WebSocket connected.");
         setIsVoiceActive(true);
         setVoiceStatus("recording");
+        setActiveVoiceText("");
+        setActiveVoiceThoughts("");
       };
       
       ws.onmessage = async (event) => {
         const msg = JSON.parse(event.data);
         if (msg.type === "status") {
           setVoiceStatus(msg.status);
+          if (msg.status === "thinking") {
+            setActiveVoiceText("");
+            setActiveVoiceThoughts("");
+          }
         } else if (msg.type === "text") {
-          // Real-time voice transcripts can be optionally logged here
+          setActiveVoiceText(prev => prev + msg.text);
+        } else if (msg.type === "thought") {
+          setActiveVoiceThoughts(prev => prev + msg.thought);
         } else if (msg.type === "audio") {
           const audioBytes = Uint8Array.from(atob(msg.audio), c => c.charCodeAt(0));
           audioQueueRef.current.push(audioBytes);
@@ -2758,6 +2768,73 @@ export default function App() {
             >
               Dismiss
             </button>
+
+          </div>
+        </div>
+      )}
+      {isVoiceActive && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-955/80 backdrop-blur-md animate-fade-in">
+          <div className="relative w-full max-w-lg bg-gray-900 border border-gray-800 rounded-3xl p-6 md:p-8 shadow-2xl z-10 flex flex-col space-y-6">
+            <div className="flex justify-between items-center pb-3 border-b border-gray-800">
+              <div className="flex items-center space-x-2">
+                <div className={`h-2.5 w-2.5 rounded-full ${
+                  voiceStatus === 'recording' ? 'bg-red-500 animate-pulse' : voiceStatus === 'thinking' ? 'bg-amber-500 animate-ping' : 'bg-green-500 animate-pulse'
+                }`}></div>
+                <h3 className="text-base font-bold text-gray-100 uppercase tracking-wider">
+                  Voice Session: {voiceStatus.toUpperCase()}
+                </h3>
+              </div>
+              <button 
+                type="button"
+                onClick={stopVoiceChat}
+                className="px-3 py-1 bg-red-950/20 border border-red-900/50 text-red-400 hover:bg-red-900/40 rounded-lg text-xs font-bold transition-all focus:outline-none"
+              >
+                Close Session
+              </button>
+            </div>
+
+            {/* Glowing Pulsing Mic Icon */}
+            <div className="flex flex-col items-center justify-center py-6">
+              <div className={`h-20 w-20 rounded-full flex items-center justify-center transition-all duration-300 ${
+                voiceStatus === 'recording'
+                  ? 'bg-red-600/20 border-2 border-red-500 text-red-400 shadow-lg shadow-red-950 scale-105 animate-pulse'
+                  : voiceStatus === 'thinking'
+                  ? 'bg-amber-600/20 border-2 border-amber-500 text-amber-400 scale-100 animate-bounce'
+                  : 'bg-green-600/20 border-2 border-green-500 text-green-400 scale-105 shadow-lg shadow-green-950 animate-pulse'
+              }`}>
+                <Mic className="h-8 w-8" />
+              </div>
+              <span className="text-xs text-gray-505 mt-3 font-semibold font-mono">
+                {voiceStatus === 'recording' ? 'Speak now... (Silence ends turn)' : voiceStatus === 'thinking' ? 'Gemma 4 is thinking...' : 'Assistant is speaking...'}
+              </span>
+            </div>
+
+            {/* Live Streaming Transcript */}
+            <div className="flex flex-col space-y-2">
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Live Transcript</span>
+              <div className="p-4 rounded-2xl bg-gray-950/60 border border-gray-850 min-h-24 max-h-36 overflow-y-auto text-sm text-gray-100 leading-relaxed scrollbar-thin">
+                {activeVoiceText || <span className="text-gray-650 italic">Wait for response...</span>}
+              </div>
+            </div>
+
+            {/* Live Agentic Tool Console */}
+            <div className="flex flex-col space-y-2">
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Agentic Tool Console</span>
+              <div className="p-4 rounded-2xl bg-black border border-gray-850 font-mono text-xs text-indigo-400 min-h-36 max-h-48 overflow-y-auto leading-relaxed scrollbar-thin shadow-inner">
+                {activeVoiceThoughts ? (
+                  activeVoiceThoughts.split('\n').map((line, idx) => (
+                    <div key={idx} className="flex items-start space-x-1.5 py-0.5">
+                      <span className="text-gray-600 select-none">&gt;</span>
+                      <span className={line.includes("Success") ? "text-emerald-400" : line.includes("Triggered Tool") ? "text-indigo-300 font-semibold" : "text-gray-405"}>
+                        {line}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <span className="text-gray-750 italic">&gt; Idle. Waiting for background agent actions...</span>
+                )}
+              </div>
+            </div>
 
           </div>
         </div>

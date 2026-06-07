@@ -1269,6 +1269,8 @@ async def voice_chat_websocket(websocket: WebSocket):
                                 break
                             pcm_b64 = base64.b64encode(pcm_bytes).decode("utf-8")
                             await websocket.send_json({"type": "audio", "audio": pcm_b64})
+                elif channel == "thought":
+                    await websocket.send_json({"type": "thought", "thought": chunk})
                             
             if sentence_buffer.strip() and not interrupt_event.is_set():
                 pcm_bytes = synthesize_text_to_pcm(sentence_buffer.strip())
