@@ -458,7 +458,7 @@ export default function App() {
   const subscribeToPushNotifications = async () => {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
       console.warn("Web Push is not supported by this browser.");
-      return;
+      return false;
     }
     
     setIsSubscribingPush(true);
@@ -487,17 +487,20 @@ export default function App() {
         applicationServerKey: outputArray
       });
       
-      await fetch(`/api/notifications/subscribe`, {
+      const subResp = await fetch(`/api/notifications/subscribe`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({ subscription })
       });
+      if (!subResp.ok) throw new Error("Failed to send subscription to server");
       
       console.log("Successfully subscribed to Push Notifications!");
+      return true;
     } catch (err) {
       console.error("Failed to subscribe to push notifications", err);
+      return false;
     } finally {
       setIsSubscribingPush(false);
     }
@@ -1414,17 +1417,34 @@ export default function App() {
 
                               <button
                                 onClick={async () => {
-                                  try {
-                                    const res = await fetch('/api/notifications/test', { method: 'POST' });
-                                    if (res.ok) {
-                                      alert("Test notification dispatched!");
-                                    } else {
-                                      const err = await res.json();
-                                      alert("Failed: " + (err.detail || "Unknown error"));
+                                    try {
+                                      let isSubscribed = false;
+                                      if ('serviceWorker' in navigator && 'PushManager' in window) {
+                                        const reg = await navigator.serviceWorker.ready;
+                                        const sub = await reg.pushManager.getSubscription();
+                                        if (sub) {
+                                          isSubscribed = true;
+                                        }
+                                      }
+
+                                      if (!isSubscribed) {
+                                        const success = await subscribeToPushNotifications();
+                                        if (!success) {
+                                          alert("Failed to test notification: Notification subscription could not be registered.");
+                                          return;
+                                        }
+                                      }
+
+                                      const res = await fetch('/api/notifications/test', { method: 'POST' });
+                                      if (res.ok) {
+                                        alert("Test notification dispatched!");
+                                      } else {
+                                        const err = await res.json();
+                                        alert("Failed: " + (err.detail || "Unknown error"));
+                                      }
+                                    } catch (err) {
+                                      alert("Error: " + err.message);
                                     }
-                                  } catch (err) {
-                                    alert("Error: " + err.message);
-                                  }
                                 }}
                                 className="w-full py-1 text-center bg-indigo-950/45 text-indigo-300 border border-indigo-900/40 rounded-lg text-[10px] font-bold hover:bg-indigo-900/35 transition-all"
                               >
