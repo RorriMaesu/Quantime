@@ -1227,17 +1227,31 @@ async def voice_chat_websocket(websocket: WebSocket):
         text_buffer = ""
         sentence_buffer = ""
         
+        chunk_queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
+        
         def run_stream():
-            return list(generate_agent_stream(prompt="", chat_history=history, audio_b64=audio_b64))
-            
+            try:
+                generator = generate_agent_stream(prompt="", chat_history=history, audio_b64=audio_b64)
+                for channel, chunk in generator:
+                    asyncio.run_coroutine_threadsafe(chunk_queue.put((channel, chunk)), loop)
+            except Exception as ex:
+                logger.error(f"Error in background generator thread: {ex}")
+            finally:
+                asyncio.run_coroutine_threadsafe(chunk_queue.put((None, None)), loop)
+                
+        import threading
+        threading.Thread(target=run_stream, daemon=True).start()
+        
         try:
-            chunks = await loop.run_in_executor(None, run_stream)
-            
-            for channel, chunk in chunks:
+            while True:
                 if interrupt_event.is_set():
                     logger.info("LLM generation interrupted by user barge-in.")
                     await websocket.send_json({"type": "status", "status": "idle"})
+                    break
+                    
+                channel, chunk = await chunk_queue.get()
+                if channel is None:
                     break
                     
                 if channel == "text":
@@ -1269,7 +1283,8 @@ async def voice_chat_websocket(websocket: WebSocket):
                 await websocket.send_json({"type": "status", "status": "idle"})
                 
         except Exception as e:
-            logger.error(f"Error in LLM voice generation loop: {e}")
+            import traceback
+            logger.error(f"Error in LLM voice generation loop: {e}\n{traceback.format_exc()}")
         finally:
             assistant_speaking = False
             
