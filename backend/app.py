@@ -1597,12 +1597,12 @@ async def check_and_send_notifications():
                             vapid_private_key=vapid_key,
                             vapid_claims={"sub": "mailto:admin@quantime.app"}
                         )
-                    except WebPushException as e:
+                    except Exception as e:
                         logger.warning(f"Failed to deliver webpush to subscription: {e}")
                         
                 mark_notification_sent(T["id"], T["start_time"], alert_to_send)
     except Exception as e:
-        logger.error(f"Error checking and sending notifications: {e}")
+        logger.error("Error checking and sending notifications:", exc_info=True)
 
 def notification_poller_thread():
     loop = asyncio.new_event_loop()
@@ -1683,7 +1683,7 @@ def test_notifications():
                 vapid_claims={"sub": "mailto:admin@quantime.app"}
             )
             success_count += 1
-        except WebPushException as e:
+        except Exception as e:
             logger.warning(f"Failed to send test push: {e}")
             fail_count += 1
             
