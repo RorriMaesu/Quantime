@@ -827,6 +827,7 @@ export default function App() {
                 </div>
               )}
             </div>
+          </div>
         </header>
 
         {/* Google Sync Connection Card */}
