@@ -18,9 +18,9 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Build Installer with Inno Setup
-        run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" QuantimeSetup.iss
-        shell: powershell
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
+        with:
+          path: QuantimeSetup.iss
 
       - name: Create Release & Upload Asset
         uses: softprops/action-gh-release@v1
