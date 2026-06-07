@@ -58,6 +58,7 @@ export default function App() {
   const [showNotificationSettings, setShowNotificationSettings] = useState(false);
   const [isSubscribingPush, setIsSubscribingPush] = useState(false);
   const [showMobileInstallPrompt, setShowMobileInstallPrompt] = useState(false);
+  const [isAppInstalledSuccessfully, setIsAppInstalledSuccessfully] = useState(false);
   const [tasks, setTasks] = useState([]);
   const [chats, setChats] = useState([
     {
@@ -173,6 +174,15 @@ export default function App() {
     };
     window.addEventListener('beforeinstallprompt', handlePrompt);
     return () => window.removeEventListener('beforeinstallprompt', handlePrompt);
+  }, []);
+
+  useEffect(() => {
+    const handleAppInstalled = () => {
+      setIsAppInstalledSuccessfully(true);
+      setShowMobileInstallPrompt(false);
+    };
+    window.addEventListener('appinstalled', handleAppInstalled);
+    return () => window.removeEventListener('appinstalled', handleAppInstalled);
   }, []);
 
   useEffect(() => {
@@ -2488,6 +2498,43 @@ export default function App() {
                 Continue in Browser
               </button>
             </div>
+
+          </div>
+        </div>
+      )}
+
+      {isAppInstalledSuccessfully && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-955/90 backdrop-blur-md animate-fade-in">
+          <div className="relative w-full max-w-sm bg-gray-900 border border-gray-800 rounded-3xl p-6 shadow-glow flex flex-col items-center text-center space-y-5 animate-slide">
+            
+            {/* Celebration Icon */}
+            <div className="h-16 w-16 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-500 flex items-center justify-center glow-emerald mb-2">
+              <CheckCircle className="h-8 w-8 text-black" />
+            </div>
+
+            {/* Title & Desc */}
+            <div className="space-y-2">
+              <h2 className="text-xl font-extrabold text-white">Ecosystem Connected!</h2>
+              <p className="text-xs text-gray-400 leading-relaxed">
+                Quantime is now installed on your device. The app icon has been placed on your home screen.
+              </p>
+            </div>
+
+            <div className="w-full bg-gray-955 border border-gray-805/80 rounded-2xl p-4 space-y-2 text-left">
+              <h4 className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Next Steps</h4>
+              <ol className="space-y-1.5 text-[11px] text-gray-300 list-decimal pl-4">
+                <li>Close this browser tab.</li>
+                <li>Go to your phone home screen.</li>
+                <li>Tap the <strong>Quantime</strong> app icon to launch the pairing panel.</li>
+              </ol>
+            </div>
+
+            <button 
+              onClick={() => setIsAppInstalledSuccessfully(false)}
+              className="w-full bg-gray-850 hover:bg-gray-800 text-gray-350 font-semibold py-3 px-4 rounded-xl text-xs transition-all"
+            >
+              Dismiss
+            </button>
 
           </div>
         </div>
