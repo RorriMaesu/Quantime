@@ -1,6 +1,10 @@
 # install_windows_app.ps1
 # Programmatically configures Quantime to start silently on Windows Logon.
 
+param(
+    [switch]$Silent
+)
+
 $vbsPath = Join-Path $PSScriptRoot "run_quantime_hidden.vbs"
 $taskName = "QuantimeServer"
 
@@ -31,10 +35,15 @@ try {
     Write-Host "You can manage or test this task in Windows Task Scheduler under the name '$taskName'." -ForegroundColor Green
     
     # Optionally start it now
-    $response = Read-Host "Would you like to run the background task right now? (y/n)"
-    if ($response -eq 'y' -or $response -eq 'yes') {
+    if ($Silent) {
         Start-ScheduledTask -TaskName $taskName
         Write-Host "Task started successfully!" -ForegroundColor Green
+    } else {
+        $response = Read-Host "Would you like to run the background task right now? (y/n)"
+        if ($response -eq 'y' -or $response -eq 'yes') {
+            Start-ScheduledTask -TaskName $taskName
+            Write-Host "Task started successfully!" -ForegroundColor Green
+        }
     }
 } catch {
     Write-Host "Failed to register scheduled task: $_" -ForegroundColor Red

@@ -91,12 +91,12 @@ Pop-Location
 # 7. Configure Firewall Exception Rules
 # ---------------------------------------------------------------------
 Write-Output "Enabling firewall communication rules for cross-device mobile sync..."
-Start-Process -FilePath "netsh" -ArgumentList "advfirewall firewall add rule name=`"Quantime Gateway`" dir=in action=allow protocol=TCP localport=8000,5173" -Verb RunAs -WindowStyle Hidden -ErrorAction SilentlyContinue
+netsh advfirewall firewall add rule name="Quantime Gateway" dir=in action=allow protocol=TCP localport=8000,5173
 
 # ---------------------------------------------------------------------
 # 8. Register Windows Task Scheduler Autostart
 # ---------------------------------------------------------------------
 Write-Output "Registering Task Scheduler startup background tasks..."
-Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File `"$appDir\install_windows_app.ps1`"" -Wait -NoNewWindow
+Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File `"$appDir\install_windows_app.ps1`" -Silent" -Wait -NoNewWindow
 
 Write-Output "Quantime installation completed successfully!"
