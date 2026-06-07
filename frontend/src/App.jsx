@@ -57,6 +57,7 @@ export default function App() {
   const [notificationDndFocus, setNotificationDndFocus] = useState(true);
   const [showNotificationSettings, setShowNotificationSettings] = useState(false);
   const [isSubscribingPush, setIsSubscribingPush] = useState(false);
+  const [showMobileInstallPrompt, setShowMobileInstallPrompt] = useState(false);
   const [tasks, setTasks] = useState([]);
   const [chats, setChats] = useState([
     {
@@ -172,6 +173,16 @@ export default function App() {
     };
     window.addEventListener('beforeinstallprompt', handlePrompt);
     return () => window.removeEventListener('beforeinstallprompt', handlePrompt);
+  }, []);
+
+  useEffect(() => {
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth < 768;
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+    const dismissed = sessionStorage.getItem('pwa_prompt_dismissed');
+    
+    if (isMobile && !isStandalone && !dismissed) {
+      setShowMobileInstallPrompt(true);
+    }
   }, []);
 
   const chatEndRef = useRef(null);
@@ -2382,6 +2393,67 @@ export default function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {showMobileInstallPrompt && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-955/80 backdrop-blur-md animate-fade-in">
+          <div className="relative w-full max-w-sm bg-gray-900 border border-gray-800 rounded-3xl p-6 shadow-glow flex flex-col items-center text-center space-y-5 animate-slide">
+            
+            {/* Logo Icon */}
+            <div className="h-16 w-16 rounded-2xl bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center glow-indigo mb-2 animate-bounce-subtle">
+              <Sparkles className="h-8 w-8 text-white" />
+            </div>
+
+            {/* Title & Desc */}
+            <div className="space-y-2">
+              <h2 className="text-xl font-extrabold text-white">Install Quantime App</h2>
+              <p className="text-xs text-gray-400 leading-relaxed">
+                Add Quantime to your Home Screen for push notifications, offline calendar access, and a native app experience.
+              </p>
+            </div>
+
+            {/* Action buttons based on OS */}
+            <div className="w-full space-y-3">
+              {deferredPrompt ? (
+                /* Android / Chrome prompt available */
+                <button 
+                  onClick={async () => {
+                    await handleInstallPWA();
+                    setShowMobileInstallPrompt(false);
+                  }}
+                  className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold py-3 px-4 rounded-xl text-xs shadow-lg transition-all"
+                >
+                  Install App
+                </button>
+              ) : (
+                /* iOS Safari / Fallback steps */
+                <div className="bg-gray-955 border border-gray-805/80 rounded-2xl p-4 text-left space-y-3">
+                  <h4 className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">iOS / Safari Instructions</h4>
+                  <div className="space-y-2 text-[11px] text-gray-300">
+                    <div className="flex items-center space-x-2">
+                      <span className="flex items-center justify-center h-4.5 w-4.5 rounded-full bg-indigo-950 text-indigo-300 font-bold text-[9px]">1</span>
+                      <p>Tap the <strong>Share</strong> button in Safari (bottom navigation bar).</p>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <span className="flex items-center justify-center h-4.5 w-4.5 rounded-full bg-indigo-950 text-indigo-300 font-bold text-[9px]">2</span>
+                      <p>Scroll down and select <strong>Add to Home Screen</strong>.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <button 
+                onClick={() => {
+                  sessionStorage.setItem('pwa_prompt_dismissed', 'true');
+                  setShowMobileInstallPrompt(false);
+                }}
+                className="w-full py-2.5 text-xs text-gray-500 hover:text-gray-300 transition-all font-semibold"
+              >
+                Continue in Browser
+              </button>
+            </div>
+
           </div>
         </div>
       )}
