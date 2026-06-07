@@ -913,6 +913,152 @@ def update_task_endpoint(task_id: str, payload: TaskUpdateSchema):
             
     return {"status": "success", "message": f"Task '{task_id}' updated successfully."}
 
+class ProposalCommitSchema(BaseModel):
+    transaction_id: str
+    option_id: str
+
+class ProposalRejectSchema(BaseModel):
+    transaction_id: str
+
+@app.get("/api/proposals/{tx_id}")
+def get_proposal_options(tx_id: str):
+    """Fetches staged proposal options for a specific transaction ID."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # Cleanup expired proposals on read
+        cursor.execute("DELETE FROM proposed_schedules WHERE expires_at < ?", (time.time(),))
+        conn.commit()
+        
+        cursor.execute("SELECT option_id, description, proposed_changes FROM proposed_schedules WHERE transaction_id = ?", (tx_id,))
+        rows = cursor.fetchall()
+        if not rows:
+            raise HTTPException(status_code=404, detail="Proposal transaction not found or expired.")
+        options = []
+        for r in rows:
+            options.append({
+                "option_id": r["option_id"],
+                "description": r["description"],
+                "proposed_changes": json.loads(r["proposed_changes"])
+            })
+        return {"transaction_id": tx_id, "options": options}
+    finally:
+        conn.close()
+
+@app.post("/api/proposals/commit")
+def commit_proposal_option(payload: ProposalCommitSchema):
+    """
+    Commit a staged proposal option. 
+    1. Saves the current task states in state_snapshots for rollback ability.
+    2. Overwrites modified tasks with the new proposed start_time and end_time.
+    3. Triggers Google Calendar event syncing/patching where applicable.
+    4. Deletes all staged options under this transaction ID.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # 1. Fetch the selected option
+        cursor.execute("SELECT proposed_changes FROM proposed_schedules WHERE transaction_id = ? AND option_id = ?", 
+                       (payload.transaction_id, payload.option_id))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Selected proposal option not found.")
+        
+        changes = json.loads(row["proposed_changes"])
+        
+        # 2. Get current state of all tasks database to write a snapshot
+        cursor.execute("SELECT id, title, description, start_time, end_time, energy_level, constraint_type, status, source_event_id FROM tasks")
+        current_tasks = [dict(r) for r in cursor.fetchall()]
+        snapshot_data = json.dumps(current_tasks)
+        cursor.execute("INSERT INTO state_snapshots (state_data, timestamp) VALUES (?, ?)", (snapshot_data, time.time()))
+        
+        # 3. Apply changes to tasks
+        for change in changes:
+            task_id = change["task_id"]
+            new_start = change["new_start"]
+            new_end = change["new_end"]
+            
+            # Update locally
+            cursor.execute("UPDATE tasks SET start_time = ?, end_time = ?, updated_at = ? WHERE id = ?", (new_start, new_end, time.time(), task_id))
+            
+            # Mirror/Patch to Google Calendar if sync ID exists
+            cursor.execute("SELECT source_event_id, title FROM tasks WHERE id = ?", (task_id,))
+            task_row = cursor.fetchone()
+            if task_row and task_row["source_event_id"]:
+                try:
+                    from backend.google_client import GoogleCalendarSync
+                    GoogleCalendarSync.patch_calendar_event(task_row["source_event_id"], new_start, new_end, task_row["title"])
+                except Exception as sync_err:
+                    logger.error(f"Failed to batch patch calendar event for {task_id}: {sync_err}")
+                    
+        # 4. Clean up staged options
+        cursor.execute("DELETE FROM proposed_schedules WHERE transaction_id = ?", (payload.transaction_id,))
+        conn.commit()
+        return {"status": "success", "message": f"Proposal option '{payload.option_id}' committed successfully."}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
+
+@app.post("/api/proposals/rollback")
+def rollback_proposal():
+    """
+    Rolls back the schedule database to the last state snapshot.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT state_data FROM state_snapshots ORDER BY id DESC LIMIT 1")
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="No snapshots available for rollback.")
+        
+        # Clear current tasks
+        cursor.execute("DELETE FROM tasks")
+        
+        # Restore from snapshot
+        restored_tasks = json.loads(row["state_data"])
+        for t in restored_tasks:
+            cursor.execute("""
+                INSERT INTO tasks (id, title, description, start_time, end_time, energy_level, constraint_type, status, source_event_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (t["id"], t["title"], t["description"], t["start_time"], t["end_time"], t["energy_level"], t["constraint_type"], t["status"], t.get("source_event_id"), time.time(), time.time()))
+            
+            # Mirror/Patch back to Google Calendar if sync ID exists
+            if t.get("source_event_id"):
+                try:
+                    from backend.google_client import GoogleCalendarSync
+                    GoogleCalendarSync.patch_calendar_event(t["source_event_id"], t["start_time"], t["end_time"], t["title"])
+                except Exception as sync_err:
+                    logger.error(f"Failed to rollback calendar event for {t['id']}: {sync_err}")
+                    
+        # Delete that last snapshot
+        cursor.execute("DELETE FROM state_snapshots WHERE id = (SELECT id FROM state_snapshots ORDER BY id DESC LIMIT 1)")
+        conn.commit()
+        return {"status": "success", "message": "Schedule rolled back to the previous snapshot."}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
+
+@app.post("/api/proposals/reject")
+def reject_proposal(payload: ProposalRejectSchema):
+    """Discards staged proposal options."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM proposed_schedules WHERE transaction_id = ?", (payload.transaction_id,))
+        conn.commit()
+        return {"status": "success", "message": "Proposal rejected and deleted."}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
+
+
 @app.get("/api/chats")
 def list_chats():
     """Retrieves all chat interactions from local SQLite."""

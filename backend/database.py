@@ -131,8 +131,38 @@ def init_db(db_path: str = DB_FILE) -> None:
         timestamp REAL NOT NULL
     )
     """)
+
+    # 7. Proposed Schedules Staging Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS proposed_schedules (
+        transaction_id TEXT NOT NULL,
+        option_id TEXT NOT NULL,
+        description TEXT NOT NULL,
+        proposed_changes TEXT NOT NULL,
+        expires_at REAL NOT NULL,
+        created_at REAL NOT NULL,
+        PRIMARY KEY (transaction_id, option_id)
+    )
+    """)
+
+    # 8. Circadian Profiles Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS circadian_profiles (
+        key TEXT PRIMARY KEY,
+        start_hour INTEGER NOT NULL,
+        end_hour INTEGER NOT NULL,
+        efficiency_type TEXT CHECK(efficiency_type IN ('peak', 'downtime')) NOT NULL
+    )
+    """)
     
-    # 7. Seed Default Profiles (if empty)
+    # Seed default circadian peak hours if empty
+    cursor.execute("SELECT COUNT(*) FROM circadian_profiles")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO circadian_profiles (key, start_hour, end_hour, efficiency_type) VALUES ('morning_peak', 9, 12, 'peak')")
+        cursor.execute("INSERT INTO circadian_profiles (key, start_hour, end_hour, efficiency_type) VALUES ('evening_peak', 15, 18, 'peak')")
+        cursor.execute("INSERT INTO circadian_profiles (key, start_hour, end_hour, efficiency_type) VALUES ('afternoon_slump', 13, 15, 'downtime')")
+        
+    # 9. Seed Default Profiles (if empty)
     cursor.execute("SELECT COUNT(*) FROM user_profiles WHERE key = 'user_id'")
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT OR IGNORE INTO user_profiles (key, value) VALUES ('user_id', 'user')")

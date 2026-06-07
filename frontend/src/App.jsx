@@ -84,6 +84,35 @@ export default function App() {
   const [weekOffset, setWeekOffset] = useState(0); // offset in weeks from current week
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [stagedProposal, setStagedProposal] = useState(null); // { transaction_id, options: [...] }
+  const [activeProposalOption, setActiveProposalOption] = useState(null); // { option_id, description, proposed_changes: [...] }
+  const [proposalsMap, setProposalsMap] = useState({}); // tx_id -> proposal details
+
+  // Hook to fetch proposal options when a proposal tag is detected in chat history
+  useEffect(() => {
+    const fetchProposals = async () => {
+      for (const chat of chats) {
+        if (chat.text && chat.text.includes("<schedule-proposal")) {
+          const match = chat.text.match(/<schedule-proposal tx="([^"]+)">/);
+          if (match && match[1]) {
+            const txId = match[1];
+            if (!proposalsMap[txId]) {
+              try {
+                const resp = await fetch(`${API_BASE}/api/proposals/${txId}`);
+                if (resp.ok) {
+                  const data = await resp.json();
+                  setProposalsMap(prev => ({ ...prev, [txId]: data }));
+                }
+              } catch (e) {
+                console.error("Failed to fetch proposal options", e);
+              }
+            }
+          }
+        }
+      }
+    };
+    fetchProposals();
+  }, [chats]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -511,15 +540,16 @@ export default function App() {
     }
   };
 
-  const handleSendMessage = async (e) => {
-    e.preventDefault();
-    if (!inputMessage.trim()) return;
+  const handleSendMessage = async (e, customText = null) => {
+    if (e) e.preventDefault();
+    const messageToSend = customText || inputMessage;
+    if (!messageToSend.trim()) return;
 
     const chatId = `chat_${Date.now()}`;
     const userMsg = {
       id: `msg_user_${Date.now()}`,
       sender: 'user',
-      text: inputMessage,
+      text: messageToSend,
       timestamp: Date.now(),
       status: 'done'
     };
@@ -535,7 +565,7 @@ export default function App() {
     };
 
     setChats(prev => [...prev, userMsg, agentPlaceholder]);
-    setInputMessage("");
+    if (!customText) setInputMessage("");
     setIsLoading(true);
 
     // If live Firestore client is configured, push document to Cloud Firestore
@@ -618,6 +648,93 @@ export default function App() {
     } catch (e) {
       console.error("Failed to post chat via REST", e);
       setIsLoading(false);
+    }
+  };
+
+  const handleCommitProposal = async (txId, optionId) => {
+    try {
+      const resp = await fetch(`${API_BASE}/api/proposals/commit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transaction_id: txId, option_id: optionId })
+      });
+      if (resp.ok) {
+        setStagedProposal(null);
+        setActiveProposalOption(null);
+        
+        // Post confirmation message to chat local DB
+        const confirmMsg = {
+          sender: "agent",
+          text: "✓ Rescheduling Plan Applied! The schedule has been successfully re-organized.",
+          thoughts: "User approved the speculative rescheduling workaround options. Changes committed.",
+          timestamp: Date.now() / 1000
+        };
+        
+        await fetch(`${API_BASE}/api/chats`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(confirmMsg)
+        });
+        
+        fetchTasks();
+        const chatResp = await fetch(`${API_BASE}/api/chats`);
+        if (chatResp.ok) {
+          const chatsData = await chatResp.json();
+          setChats(chatsData.chats);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to commit proposal option", e);
+    }
+  };
+
+  const handleRejectProposal = async (txId) => {
+    try {
+      const resp = await fetch(`${API_BASE}/api/proposals/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transaction_id: txId })
+      });
+      if (resp.ok) {
+        setStagedProposal(null);
+        setActiveProposalOption(null);
+        
+        // Post reject and trigger next plan search
+        handleSendMessage(null, "I decline this schedule proposal. Please try to find another alternative workaround.");
+      }
+    } catch (e) {
+      console.error("Failed to reject proposal", e);
+    }
+  };
+
+  const handleRollbackProposal = async () => {
+    try {
+      const resp = await fetch(`${API_BASE}/api/proposals/rollback`, {
+        method: "POST"
+      });
+      if (resp.ok) {
+        const rollbackMsg = {
+          sender: "agent",
+          text: "↩ Rescheduling changes undone! The schedule has been restored to the previous snapshot state.",
+          thoughts: "User requested rollback. Snapshot state restored.",
+          timestamp: Date.now() / 1000
+        };
+        
+        await fetch(`${API_BASE}/api/chats`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(rollbackMsg)
+        });
+        
+        fetchTasks();
+        const chatResp = await fetch(`${API_BASE}/api/chats`);
+        if (chatResp.ok) {
+          const chatsData = await chatResp.json();
+          setChats(chatsData.chats);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to rollback schedule", e);
     }
   };
 
@@ -1213,7 +1330,23 @@ export default function App() {
           {/* Timeline Cards */}
           <div className="space-y-4 relative pl-4 border-l border-gray-800">
             {(() => {
-              const filteredTasks = tasks.filter(t => {
+              // Apply staged changes preview to the list if active
+              const previewTasks = tasks.map(t => {
+                if (activeProposalOption) {
+                  const change = activeProposalOption.proposed_changes.find(c => c.task_id === t.id);
+                  if (change) {
+                    return {
+                      ...t,
+                      start_time: change.new_start,
+                      end_time: change.new_end,
+                      isPreviewGhost: true
+                    };
+                  }
+                }
+                return t;
+              });
+
+              const filteredTasks = previewTasks.filter(t => {
                 const tDate = parseTaskDate(t.start_time);
                 return isSameDay(tDate, selectedDate);
               });
@@ -1260,7 +1393,9 @@ export default function App() {
                 const isExpanded = expandedTasks[task.id];
 
                 let cardClass = "bg-gray-900/40 border-gray-800 backdrop-blur-md text-gray-300 border-l-4 border-l-gray-500";
-                if (isCompleted) {
+                if (task.isPreviewGhost) {
+                  cardClass = "bg-indigo-950/15 border-indigo-500/50 border-dashed text-indigo-300 border-l-4 border-l-indigo-400 opacity-80 animate-pulse";
+                } else if (isCompleted) {
                   cardClass = "bg-gray-950/20 border-gray-950 text-gray-500 border-l-4 border-l-gray-700 opacity-60";
                 } else if (isCrimson) {
                   cardClass = "bg-red-950/20 border-red-600/50 backdrop-blur-md shadow-sm shadow-red-950/20 text-red-200 border-l-4 border-l-red-600";
@@ -1274,7 +1409,7 @@ export default function App() {
                     className={`relative p-4 rounded-xl transition-all hover:scale-[1.01] flex items-start space-x-4 border ${cardClass} float-ui`}
                   >
                     <div className={`absolute -left-[22px] top-5 h-3.5 w-3.5 rounded-full bg-darkspace border-2 ${
-                      isCompleted ? 'border-green-500 bg-green-500' : isCrimson ? 'border-red-600' : isTeal ? 'border-teal-600' : 'border-gray-500'
+                      task.isPreviewGhost ? 'border-indigo-400 bg-indigo-950' : isCompleted ? 'border-green-500 bg-green-500' : isCrimson ? 'border-red-600' : isTeal ? 'border-teal-600' : 'border-gray-500'
                     }`}></div>
                     
                     <button
@@ -1295,6 +1430,11 @@ export default function App() {
                             isCompleted ? 'text-gray-500 line-through' : 'text-gray-100'
                           }`}>
                             <span>{task.title}</span>
+                            {task.isPreviewGhost && (
+                              <span className="text-[9px] bg-indigo-950/80 border border-indigo-850 text-indigo-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
+                                Preview Slot
+                              </span>
+                            )}
                             {task.description && (
                               <ChevronDown className={`h-3.5 w-3.5 text-gray-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                             )}
@@ -1402,6 +1542,11 @@ export default function App() {
         <div className="flex-1 overflow-y-auto space-y-4 pr-1 mb-4">
           {chats.map((chat) => {
             const isAgent = chat.sender === 'agent';
+            const proposalMatch = chat.text ? chat.text.match(/<schedule-proposal tx="([^"]+)">/) : null;
+            const txId = proposalMatch ? proposalMatch[1] : null;
+            const proposalData = txId ? proposalsMap[txId] : null;
+            const cleanText = chat.text ? chat.text.replace(/<schedule-proposal tx="[^"]+">/, "") : "";
+            
             return (
               <div 
                 key={chat.id} 
@@ -1414,7 +1559,100 @@ export default function App() {
                       : 'bg-indigo-600 text-white rounded-tr-none shadow-md shadow-indigo-950'
                   }`}
                 >
-                  <p className="leading-relaxed">{chat.text || "Generating schedule optimizations..."}</p>
+                  <p className="leading-relaxed">{cleanText || (isAgent ? "Generating schedule optimizations..." : "")}</p>
+                  
+                  {isAgent && proposalData && (
+                    <div className="mt-4 p-4 rounded-xl bg-gray-900 border border-gray-800 space-y-3 shadow-lg max-w-full text-left">
+                      <div className="flex items-center space-x-1.5 text-xs text-indigo-400 font-bold uppercase tracking-wider">
+                        <Calendar className="h-4 w-4" />
+                        <span>Workaround Alternatives</span>
+                      </div>
+                      
+                      {/* Options Tabs */}
+                      <div className="flex space-x-1 bg-gray-950 p-0.5 rounded-lg border border-gray-850">
+                        {proposalData.options.map((opt) => {
+                          const isActive = stagedProposal && stagedProposal.transaction_id === txId && activeProposalOption && activeProposalOption.option_id === opt.option_id;
+                          return (
+                            <button
+                              key={opt.option_id}
+                              type="button"
+                              onClick={() => {
+                                setStagedProposal(proposalData);
+                                setActiveProposalOption(opt);
+                              }}
+                              className={`flex-1 text-[9px] font-bold py-1.5 rounded transition-all ${
+                                isActive 
+                                  ? 'bg-indigo-600 text-white shadow' 
+                                  : 'text-gray-400 hover:text-gray-200'
+                              }`}
+                            >
+                              {opt.option_id.toUpperCase()}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      
+                      {/* Option details */}
+                      {(() => {
+                        const currentOpt = (stagedProposal && stagedProposal.transaction_id === txId) ? activeProposalOption : null;
+                        if (!currentOpt) {
+                          return <p className="text-[11px] text-gray-500 italic">Select a workaround strategy tab above to preview shifts on the timeline.</p>;
+                        }
+                        
+                        return (
+                          <div className="space-y-3">
+                            <p className="text-[11px] text-gray-300 bg-gray-950/40 p-2 rounded-lg border border-gray-850 leading-relaxed">
+                              {currentOpt.description}
+                            </p>
+                            
+                            {/* Proposed shifts preview */}
+                            <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                              {currentOpt.proposed_changes.map((change, cIdx) => {
+                                const taskObj = tasks.find(t => t.id === change.task_id) || {};
+                                return (
+                                  <div key={cIdx} className="text-[10px] p-2 rounded-lg bg-gray-950/80 border border-gray-850 flex justify-between items-center">
+                                    <span className="font-medium text-gray-300 truncate max-w-[100px]">{taskObj.title || change.task_id}</span>
+                                    <span className="font-mono text-[9px] text-indigo-400 bg-indigo-950/40 border border-indigo-900/30 px-1 rounded">{formatTime(change.new_start)}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            {/* Action Buttons */}
+                            <div className="flex space-x-2 pt-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleCommitProposal(txId, currentOpt.option_id)}
+                                className="flex-1 py-1.5 rounded-lg text-[10px] font-bold bg-gradient-to-r from-emerald-600 to-teal-500 text-white shadow hover:opacity-90 active:scale-95 transition-all"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRejectProposal(txId)}
+                                className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold bg-red-950/20 border border-red-900/50 text-red-400 hover:bg-red-900/40 transition-all"
+                              >
+                                Decline
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+
+                  {isAgent && chat.text && chat.text.includes("✓ Rescheduling Plan Applied!") && (
+                    <div className="mt-3 p-2.5 rounded-xl bg-emerald-950/20 border border-emerald-900/40 flex justify-between items-center text-left">
+                      <span className="text-[10px] text-emerald-400 font-semibold">Changes applied.</span>
+                      <button
+                        type="button"
+                        onClick={handleRollbackProposal}
+                        className="px-2 py-1 bg-indigo-950 border border-indigo-900 text-indigo-300 hover:bg-indigo-900 rounded text-[9px] font-bold uppercase transition-all"
+                      >
+                        Undo
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Agent Deep Thinking Accordion */}

@@ -320,6 +320,49 @@ def sync_google_calendar(days: int = 30) -> Dict[str, Any]:
         logger.error(f"Google Calendar sync failed in agent: {e}")
         return {"status": "error", "message": str(e)}
 
+def stage_schedule_proposal(transaction_id: str, option_id: str, description: str, proposed_changes: List[Dict[str, Any]], expires_in_minutes: float = 10.0) -> Dict[str, Any]:
+    """
+    Stages a proposed scheduling transaction draft in proposed_schedules.
+    Proposed changes must be a list of dicts: [{"task_id": "...", "new_start": "ISO_time", "new_end": "ISO_time"}]
+    """
+    logger.info(f"Ollama Agent executing: stage_schedule_proposal(tx={transaction_id}, option={option_id})")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        expires_at = time.time() + (expires_in_minutes * 60.0)
+        changes_json = json.dumps(proposed_changes)
+        
+        # Insert or replace staged proposal option
+        cursor.execute("""
+            INSERT OR REPLACE INTO proposed_schedules (transaction_id, option_id, description, proposed_changes, expires_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (transaction_id, option_id, description, changes_json, expires_at, time.time()))
+        conn.commit()
+        return {"status": "success", "message": f"Staged option '{option_id}' for transaction '{transaction_id}'."}
+    except Exception as e:
+        logger.error(f"Failed to stage schedule proposal: {e}")
+        return {"status": "error", "message": str(e)}
+    finally:
+        conn.close()
+
+def get_circadian_profile() -> Dict[str, Any]:
+    """
+    Retrieves the user's circadian peaks and low efficiency hours for scheduling optimization.
+    """
+    logger.info("Ollama Agent executing: get_circadian_profile")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT key, start_hour, end_hour, efficiency_type FROM circadian_profiles")
+        rows = cursor.fetchall()
+        profile = [dict(r) for r in rows]
+        return {"status": "success", "circadian_profile": profile}
+    except Exception as e:
+        logger.error(f"Failed to fetch circadian profile: {e}")
+        return {"status": "error", "message": str(e)}
+    finally:
+        conn.close()
+
 # Maps tool identifiers to corresponding local modules
 TOOL_FUNCTIONS = {
     "get_current_schedule": get_current_schedule,
@@ -330,7 +373,9 @@ TOOL_FUNCTIONS = {
     "delete_task": delete_task,
     "fetch_unread_emails": fetch_unread_emails,
     "query_semantic_memory": query_semantic_memory,
-    "sync_google_calendar": sync_google_calendar
+    "sync_google_calendar": sync_google_calendar,
+    "stage_schedule_proposal": stage_schedule_proposal,
+    "get_circadian_profile": get_circadian_profile
 }
 
 TOOL_SCHEMAS = [
@@ -465,12 +510,48 @@ TOOL_SCHEMAS = [
                 }
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "stage_schedule_proposal",
+            "description": "Stage a speculative schedule workaround plan (transaction option) inside proposed_schedules staging database.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "transaction_id": {"type": "string", "description": "Unique transaction ID for this proposal batch (e.g. 'tx_' + timestamp)"},
+                    "option_id": {"type": "string", "enum": ["compaction", "postponement", "prioritization"], "description": "Rescheduling strategy option identifier"},
+                    "description": {"type": "string", "description": "Short explanation of this workaround strategy"},
+                    "proposed_changes": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "task_id": {"type": "string", "description": "The ID of the task being moved"},
+                                "new_start": {"type": "string", "description": "Proposed new ISO start datetime string using correct timezone offset suffix"},
+                                "new_end": {"type": "string", "description": "Proposed new ISO end datetime string using correct timezone offset suffix"}
+                            },
+                            "required": ["task_id", "new_start", "new_end"]
+                        },
+                        "description": "The collection of task updates proposed in this option"
+                    }
+                },
+                "required": ["transaction_id", "option_id", "description", "proposed_changes"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_circadian_profile",
+            "description": "Retrieve the user's circadian peaks and downtime hours to align high-energy and low-energy tasks.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
     }
 ]
-
-# =====================================================================
-# Streaming Logic & spec-decoder Deep Reasoning Interceptor
-# =====================================================================
 
 SYSTEM_PROMPT = """You are the Quantime Scheduling Orchestrator, an intelligent, conversational scheduling assistant.
 Your goal is to help the user organize their daily, weekly, and monthly schedules in the most optimal and efficient way.
@@ -482,12 +563,16 @@ Behavioral Guidelines & Rules:
 1. **Analyze First**: When asked to review, brainstorm, optimize, or troubleshoot schedules, always call `get_current_schedule` to fetch the schedule bounds (daily, weekly, or monthly) first.
 2. **Handle Conflicts**: Identify overlapping events. Recommend changes to resolve conflicts.
 3. **Immutable Constraints**: Google Calendar events or events marked with `constraint_type: "hard"` are IMMUTABLE. You cannot modify, move, or delete them. If a conflict arises with a HARD constraint, reschedule the flexible `soft` constraint tasks around them.
-4. **Energy Level Optimization**: Organize soft tasks by matching the user's energy requirements:
-   - High-energy study/work blocks (`crimson`) should be scheduled during peak, uninterrupted hours.
-   - Low-energy reading/administrative tasks (`teal`) should be scheduled during off-peak downtime.
+4. **Circadian Energy Optimization**: Query the user's circadian peaks with `get_circadian_profile` and match task energy requirements:
+   - High-energy study/work blocks (`crimson`) should be scheduled during peak, uninterrupted circadian hours.
+   - Low-energy reading/administrative tasks (`teal`) should be scheduled during downtime/slump hours.
 5. **Sync Proactively**: If you need the latest email context or calendar constraints, call `sync_google_calendar` or `fetch_unread_emails`.
-6. **Task Dependencies**: Enforce Directed Acyclic Graph (DAG) dependency constraints before committing changes. Call `create_task_dependency` to link dependent tasks.
-7. **Conversational & Proactive**: Give clear summaries of actions you took, highlight what tools you executed, explain why you restructured the schedule, and outline any proposed adjustments clearly to the user.
+6. **Task Dependencies**: Enforce Directed Acyclic Graph (DAG) dependency constraints before proposing changes. Call `create_task_dependency` to link dependent tasks.
+7. **Speculative Conflict Rescheduling**:
+   - When the user asks to schedule a new task that conflicts with existing tasks, or requests a workaround for a conflict, DO NOT call `modify_task_time` directly.
+   - Instead, generate a unique transaction ID (`tx_<timestamp>`) and stage up to three rescheduling workaround options using `stage_schedule_proposal` (e.g. option_id="compaction", "postponement", or "prioritization").
+   - Clearly explain each option's strategy in the text response and output a `<schedule-proposal tx="tx_id_here">` tag at the end of your message to render the interactive buttons in the UI.
+8. **Conversational & Proactive**: Give clear summaries of actions you took, highlight what tools you executed, explain why you restructured the schedule, and outline any proposed adjustments clearly to the user.
 """
 
 def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = []) -> Generator[Tuple[str, str], None, None]:
