@@ -5,7 +5,7 @@ import sqlite3
 import threading
 from typing import Dict, Any, List, Optional
 
-DB_FILE = "quantime.db"
+DB_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "quantime.db"))
 
 class FirestoreThrottlingException(Exception):
     """Raised when Firestore write rates exceed limits to preserve the free Spark tier."""

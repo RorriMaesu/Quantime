@@ -23,7 +23,7 @@ logger = logging.getLogger("quantime.google_client")
 logging.basicConfig(level=logging.INFO)
 
 # Config files (Expected locally)
-CREDENTIALS_FILE = "credentials.json"
+CREDENTIALS_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "credentials.json"))
 SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/gmail.readonly",

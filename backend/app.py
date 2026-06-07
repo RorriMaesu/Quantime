@@ -43,7 +43,7 @@ init_db()
 
 firebase_app = None
 db_firestore = None
-FIREBASE_KEY_PATH = os.environ.get("FIREBASE_APPLICATION_CREDENTIALS", "firebase_key.json")
+FIREBASE_KEY_PATH = os.environ.get("FIREBASE_APPLICATION_CREDENTIALS", os.path.abspath(os.path.join(os.path.dirname(__file__), "firebase_key.json")))
 FIREBASE_PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID", "quantime-pwa-mock")
 
 def get_current_user_id() -> str:
@@ -616,7 +616,17 @@ def save_setup_credentials(creds: CredentialsSchema):
 @app.get("/auth/url")
 def get_oauth_url(request: Request, origin: Optional[str] = None):
     """Exposes consent URL redirect parameters, passing target origin via OAuth state."""
-    redirect_uri = f"{request.base_url}auth/callback"
+    from backend.google_client import load_client_secrets
+    secrets = load_client_secrets()
+    redirect_uris = secrets.get("redirect_uris", [])
+    
+    default_redirect = f"{request.base_url}auth/callback"
+    # If request's base URL callback is not in the registered list, fallback to the first allowed URI
+    if redirect_uris and default_redirect not in redirect_uris:
+        redirect_uri = redirect_uris[0]
+    else:
+        redirect_uri = default_redirect
+        
     url = GoogleOAuthManager.get_auth_url(redirect_uri, state=origin)
     return {"url": url}
 
@@ -641,7 +651,16 @@ def oauth_callback(
             GoogleOAuthManager.save_tokens(tokens)
         elif code:
             # Direct Mode Callback: Exchange code locally using client secrets
-            redirect_uri = f"{request.base_url}auth/callback"
+            from backend.google_client import load_client_secrets
+            secrets = load_client_secrets()
+            redirect_uris = secrets.get("redirect_uris", [])
+            
+            default_redirect = f"{request.base_url}auth/callback"
+            if redirect_uris and default_redirect not in redirect_uris:
+                redirect_uri = redirect_uris[0]
+            else:
+                redirect_uri = default_redirect
+                
             tokens = GoogleOAuthManager.exchange_code_for_tokens(code, redirect_uri)
             access_token = tokens.get("access_token")
         else:
