@@ -204,7 +204,7 @@ def start_services():
     
     # 4. Start Localtunnel gateway
     tunnel_proc = subprocess.Popen(
-        [node_bin, lt_js, "--port", "5173", "--subdomain", "quantime-scheduler-green"],
+        [node_bin, lt_js, "--port", "5173", "--subdomain", "quantime-scheduler-green", "--local-host", "127.0.0.1"],
         cwd=os.path.join(base_dir, "frontend"),
         creationflags=creation_flags
     )
