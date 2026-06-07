@@ -16,7 +16,7 @@ PrivilegesRequired=admin
 
 [Files]
 ; Copy all project files except ignored ones
-Source: "*"; DestDir: "{app}"; Excludes: "backend\.venv\*;frontend\node_modules\*;quantime.db;backend\quantime.db;*chroma_db\*;backend\credentials.json;backend\.env;dist\*"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "*"; DestDir: "{app}"; Excludes: "backend\.venv\*;frontend\node_modules\*;quantime.db;backend\quantime.db;*chroma_db\*;backend\.env;dist\*"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
 Name: "{group}\Quantime"; Filename: "{app}\run_quantime_hidden.vbs"
