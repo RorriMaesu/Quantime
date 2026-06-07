@@ -23,4 +23,4 @@ Name: "{commondesktop}\Quantime"; Filename: "{app}\run_quantime_hidden.vbs"
 
 [Run]
 ; Run the automated post-install script silently to setup Python, Node, Ollama, and LLMs
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\post_install_wizard.ps1"""; StatusMsg: "Configuring local environment, downloading Ollama, and compiling AI weights (this may take a few minutes)..."; Flags: runhidden
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\post_install_wizard.ps1"""; StatusMsg: "Launching Quantime Setup Wizard..."
