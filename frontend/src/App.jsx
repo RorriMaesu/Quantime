@@ -1439,8 +1439,16 @@ export default function App() {
                                       if (res.ok) {
                                         alert("Test notification dispatched!");
                                       } else {
-                                        const err = await res.json();
-                                        alert("Failed: " + (err.detail || "Unknown error"));
+                                        let errMsg = "Unknown error";
+                                        try {
+                                          const err = await res.json();
+                                          errMsg = err.detail || err.message || errMsg;
+                                        } catch (_) {
+                                          try {
+                                            errMsg = await res.text();
+                                          } catch (__) {}
+                                        }
+                                        alert("Failed: " + errMsg);
                                       }
                                     } catch (err) {
                                       alert("Error: " + err.message);

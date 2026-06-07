@@ -1392,8 +1392,9 @@ async def check_and_send_notifications():
         sent_set = {(r["task_id"], r["start_time"], r["alert_type"]) for r in cursor.fetchall()}
         conn.close()
         
+        from py_vapid import Vapid
         priv_pem, _ = get_or_create_vapid_keys()
-        priv_key_str = priv_pem.decode('utf-8')
+        vapid_key = Vapid.from_pem(priv_pem)
         
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -1442,7 +1443,7 @@ async def check_and_send_notifications():
                         webpush(
                             subscription_info=sub_info,
                             data=payload,
-                            vapid_private_key=priv_key_str,
+                            vapid_private_key=vapid_key,
                             vapid_claims={"sub": "mailto:admin@quantime.app"}
                         )
                     except WebPushException as e:
@@ -1506,8 +1507,9 @@ def test_notifications():
     if not rows:
         raise HTTPException(status_code=400, detail="No push subscriptions registered. Please subscribe first.")
         
+    from py_vapid import Vapid
     priv_pem, _ = get_or_create_vapid_keys()
-    priv_key_str = priv_pem.decode('utf-8')
+    vapid_key = Vapid.from_pem(priv_pem)
     
     payload_data = json.dumps({
         "title": "Quantime Test Alert",
@@ -1526,7 +1528,7 @@ def test_notifications():
             webpush(
                 subscription_info=sub_info,
                 data=payload_data,
-                vapid_private_key=priv_key_str,
+                vapid_private_key=vapid_key,
                 vapid_claims={"sub": "mailto:admin@quantime.app"}
             )
             success_count += 1
