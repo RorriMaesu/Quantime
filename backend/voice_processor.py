@@ -11,7 +11,7 @@ _kokoro_pipeline = None
 
 def get_tts_pipeline():
     global _kokoro_pipeline
-    if _kokoro_pipeline is None:
+    if _kokoro_pipeline is None or _kokoro_pipeline == "mock":
         try:
             from kokoro import KPipeline
             logger.info("Initializing Kokoro-82M TTS Pipeline...")
