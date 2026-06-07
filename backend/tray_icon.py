@@ -203,10 +203,18 @@ def start_services():
     )
     
     # 4. Start Localtunnel gateway
+    tunnel_log_path = os.path.join(base_dir, "frontend", "localtunnel.log")
+    try:
+        tunnel_log = open(tunnel_log_path, "a")
+    except Exception:
+        tunnel_log = subprocess.DEVNULL
+        
     tunnel_proc = subprocess.Popen(
         [node_bin, lt_js, "--port", "5173", "--subdomain", "quantime-scheduler-green", "--local-host", "127.0.0.1"],
         cwd=os.path.join(base_dir, "frontend"),
-        creationflags=creation_flags
+        creationflags=creation_flags,
+        stdout=tunnel_log,
+        stderr=tunnel_log
     )
 
 def open_dashboard(icon, item):
@@ -257,6 +265,51 @@ def open_dashboard_when_ready():
     time.sleep(0.5)
     webbrowser.open("http://localhost:5173")
 
+def monitor_localtunnel():
+    """Periodically health-checks the public LocalTunnel endpoint and restarts it if it goes offline or returns 502/503."""
+    global tunnel_proc
+    time.sleep(15)  # Wait for initial startup
+    
+    while running:
+        tunnel_healthy = False
+        try:
+            import urllib.request
+            req = urllib.request.Request(
+                "https://quantime-scheduler-green.loca.lt",
+                headers={"Bypass-Tunnel-Reminder": "true"}  # Bypass the localtunnel landing page
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if resp.status == 200:
+                    tunnel_healthy = True
+        except Exception as e:
+            # If the HTTP status is not a 5xx error (e.g. 404, 401, 403), the tunnel is still active
+            if hasattr(e, 'code') and e.code < 500:
+                tunnel_healthy = True
+                
+        if not tunnel_healthy and running:
+            # Force restart the tunnel process
+            kill_process_tree(tunnel_proc)
+            time.sleep(1)
+            
+            creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            node_bin = find_node()
+            lt_js = os.path.join(base_dir, "frontend", "node_modules", "localtunnel", "bin", "lt.js")
+            tunnel_log_path = os.path.join(base_dir, "frontend", "localtunnel.log")
+            try:
+                tunnel_log = open(tunnel_log_path, "a")
+            except Exception:
+                tunnel_log = subprocess.DEVNULL
+                
+            tunnel_proc = subprocess.Popen(
+                [node_bin, lt_js, "--port", "5173", "--subdomain", "quantime-scheduler-green", "--local-host", "127.0.0.1"],
+                cwd=os.path.join(base_dir, "frontend"),
+                creationflags=creation_flags,
+                stdout=tunnel_log,
+                stderr=tunnel_log
+            )
+            
+        time.sleep(15)
+
 def main():
     lock_single_instance()
     start_services()
@@ -274,6 +327,9 @@ def main():
     
     # Open dashboard only when services are ready
     threading.Thread(target=open_dashboard_when_ready, daemon=True).start()
+    
+    # Start self-healing LocalTunnel monitor
+    threading.Thread(target=monitor_localtunnel, daemon=True).start()
     
     icon.run()
 
