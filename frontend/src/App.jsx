@@ -83,6 +83,8 @@ export default function App() {
   const [showMobileGuide, setShowMobileGuide] = useState(false);
   const [publicIp, setPublicIp] = useState("Loading...");
   const [hasCredentials, setHasCredentials] = useState(true);
+  const [isGoogleLinked, setIsGoogleLinked] = useState(false);
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [hasModel, setHasModel] = useState(true);
   const [gpuName, setGpuName] = useState("Scanning...");
   const [gpuVram, setGpuVram] = useState(0);
@@ -219,6 +221,7 @@ export default function App() {
           const data = await resp.json();
           setUserId(data.user_id);
           setUserName(data.user_name);
+          setIsGoogleLinked(!!data.is_google_linked);
           setChats(prev => prev.map(c => {
             if (c.id === 'welcome') {
               return {
@@ -283,9 +286,11 @@ export default function App() {
       const data = await resp.json();
       if (data.url) {
         window.location.href = data.url;
+      } else {
+        throw new Error("No URL returned from backend");
       }
     } catch (e) {
-      alert("Failed to initiate Google OAuth flow.");
+      alert("Failed to initiate Google OAuth flow. Please ensure the Quantime background engine is running (check your system tray / hidden icons in the taskbar).");
     }
   };
 
@@ -787,14 +792,28 @@ export default function App() {
                       <span>Connect Mobile Phone</span>
                     </button>
 
-                    <button 
-                      onClick={() => { setShowSetupModal(true); setShowSettings(false); }}
-                      className="w-full text-left px-3 py-2 rounded-lg text-xs font-medium bg-gray-900 hover:bg-gray-800 text-gray-200 transition-all flex items-center space-x-2"
-                    >
-                      <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-                      <span>Custom OAuth Secrets</span>
-                    </button>
-                    
+                    <div className="border-t border-gray-800/80 pt-2 mt-2">
+                      <button
+                        onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+                        className="w-full text-left px-2 py-1 text-[10px] font-semibold text-gray-500 hover:text-gray-400 transition-all uppercase tracking-wider flex justify-between items-center focus:outline-none"
+                      >
+                        <span>Developer Settings</span>
+                        <ChevronDown className={`h-3 w-3 transform transition-transform ${showAdvancedSettings ? 'rotate-180' : ''}`} />
+                      </button>
+                      
+                      {showAdvancedSettings && (
+                        <div className="mt-2 space-y-2 pl-0.5 animate-slide">
+                          <button 
+                            onClick={() => { setShowSetupModal(true); setShowSettings(false); }}
+                            className="w-full text-left px-3 py-2 rounded-lg text-xs font-medium bg-gray-900 hover:bg-gray-800 text-amber-400/90 transition-all flex items-center space-x-2 border border-amber-950/20"
+                          >
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                            <span>Custom OAuth Secrets</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
                     {deferredPrompt && (
                       <button 
                         onClick={() => { handleInstallPWA(); setShowSettings(false); }}
@@ -808,8 +827,50 @@ export default function App() {
                 </div>
               )}
             </div>
-          </div>
         </header>
+
+        {/* Google Sync Connection Card */}
+        {!isGoogleLinked ? (
+          <div className="mb-6 bg-gradient-to-r from-indigo-950/40 via-purple-950/35 to-indigo-950/40 border border-indigo-500/25 p-4 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 animate-pulse-subtle">
+            <div>
+              <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
+                <Sparkles className="h-4 w-4 text-indigo-400" />
+                Connect Google Calendar & Gmail
+              </h3>
+              <p className="text-xs text-gray-400 mt-1">
+                Link your Google account to automatically schedule meetings, sync your tasks, and summarize your emails.
+              </p>
+            </div>
+            <button
+              onClick={handleOAuth}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-indigo transition-all shrink-0 cursor-pointer"
+            >
+              Connect Now
+            </button>
+          </div>
+        ) : (
+          <div className="mb-6 bg-gray-900/40 border border-gray-800 p-3.5 rounded-2xl flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="h-8 w-8 rounded-lg bg-green-950/40 border border-green-900/50 flex items-center justify-center">
+                <CheckCircle className="h-4 w-4 text-green-400" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-gray-200">Google Sync Active</p>
+                <p className="text-[10px] text-gray-400 mt-0.5">Connected as {userName}</p>
+              </div>
+            </div>
+            <div className="flex space-x-1.5">
+              <button
+                onClick={triggerSync}
+                disabled={isSyncing}
+                className="p-1.5 rounded-lg bg-gray-955 hover:bg-gray-800 border border-gray-800 text-gray-300 transition-all cursor-pointer flex items-center justify-center"
+                title="Sync Google Account"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Dynamic Timeline */}
         <section className="flex-1">

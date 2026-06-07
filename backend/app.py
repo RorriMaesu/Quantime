@@ -303,7 +303,7 @@ class ProfileSchema(BaseModel):
 
 @app.get("/api/profile")
 def get_user_profile():
-    """Retrieves user profile details (ID, name) from database or fallback configuration."""
+    """Retrieves user profile details (ID, name) and Google integration status from database."""
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -312,11 +312,15 @@ def get_user_profile():
         cursor.execute("SELECT value FROM user_profiles WHERE key = 'user_name'")
         name_row = cursor.fetchone()
         
+        cursor.execute("SELECT value FROM user_profiles WHERE key = 'google_refresh_token'")
+        google_row = cursor.fetchone()
+        is_google_linked = google_row is not None and len(google_row["value"]) > 0
+        
         u_id = id_row["value"] if id_row else os.environ.get("USER_ID", "user")
         u_name = name_row["value"] if name_row else os.environ.get("USER_NAME", "User")
-        return {"user_id": u_id, "user_name": u_name}
+        return {"user_id": u_id, "user_name": u_name, "is_google_linked": is_google_linked}
     except Exception as e:
-        return {"user_id": "user", "user_name": "User", "error": str(e)}
+        return {"user_id": "user", "user_name": "User", "is_google_linked": False, "error": str(e)}
     finally:
         conn.close()
 
