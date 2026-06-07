@@ -15,6 +15,8 @@ import {
   Terminal, 
   ChevronDown, 
   ChevronUp, 
+  ChevronLeft,
+  ChevronRight,
   AlertTriangle,
   Trash2,
   Eraser
@@ -77,9 +79,18 @@ export default function App() {
   const [newEnergy, setNewEnergy] = useState("none");
   const [newConstraint, setNewConstraint] = useState("soft");
   const [viewMode, setViewMode] = useState("timeline"); // timeline or calendar
-  const [visibleDate, setVisibleDate] = useState(new Date("2026-06-07")); // reference visible month
-  const [selectedDate, setSelectedDate] = useState(new Date("2026-06-07")); // highlighted day
+  const [visibleDate, setVisibleDate] = useState(new Date()); // reference visible month
+  const [selectedDate, setSelectedDate] = useState(new Date()); // highlighted day
+  const [weekOffset, setWeekOffset] = useState(0); // offset in weeks from current week
   const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 60000);
+    return () => clearInterval(timer);
+  }, []);
   const [showMobileGuide, setShowMobileGuide] = useState(false);
   const [publicIp, setPublicIp] = useState("Loading...");
   const [hasCredentials, setHasCredentials] = useState(true);
@@ -108,6 +119,34 @@ export default function App() {
   }, []);
 
   const chatEndRef = useRef(null);
+
+  const getDaysForOffsetWeek = (offset) => {
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    const sunday = new Date(today);
+    sunday.setDate(today.getDate() - dayOfWeek + (offset * 7));
+    
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const day = new Date(sunday);
+      day.setDate(sunday.getDate() + i);
+      days.push(day);
+    }
+    return days;
+  };
+
+  const isSameDay = (d1, d2) => {
+    return d1.getFullYear() === d2.getFullYear() &&
+           d1.getMonth() === d2.getMonth() &&
+           d1.getDate() === d2.getDate();
+  };
+
+  const getDailyWorkload = (date) => {
+    return tasks.filter(t => {
+      const tDate = new Date(t.start_time);
+      return isSameDay(tDate, date);
+    });
+  };
 
   // Helper to get array of days for visible month grid (Sunday-Saturday)
   const getCalendarDays = () => {
@@ -357,6 +396,24 @@ export default function App() {
       }
     } catch (e) {
       console.error("Failed to delete task", e);
+    }
+  };
+
+  const handleCompleteTask = async (taskId, currentStatus) => {
+    const nextStatus = currentStatus === 'completed' ? 'pending' : 'completed';
+    try {
+      const resp = await fetch(`${API_BASE}/api/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus })
+      });
+      if (resp.ok) {
+        fetchTasks();
+      } else {
+        alert("Failed to update task status.");
+      }
+    } catch (e) {
+      console.error("Failed to update task status", e);
     }
   };
 
@@ -951,6 +1008,77 @@ export default function App() {
             </div>
           </div>
 
+          {viewMode === 'timeline' && (
+            <div className="bg-gray-950/40 p-3 rounded-2xl border border-gray-900 mb-6 shadow-inner animate-slide">
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Weekly Overview</h3>
+                <div className="flex items-center space-x-1">
+                  <button 
+                    type="button"
+                    onClick={() => setWeekOffset(prev => prev - 1)}
+                    className="p-1.5 rounded-lg bg-gray-900 border border-gray-800 hover:bg-gray-800 text-gray-400 hover:text-white transition-all focus:outline-none"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setWeekOffset(0)}
+                    className="px-2 py-1 rounded-lg bg-gray-900 border border-gray-800 text-[10px] font-bold text-gray-400 hover:text-white transition-all focus:outline-none"
+                  >
+                    Today
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setWeekOffset(prev => prev + 1)}
+                    className="p-1.5 rounded-lg bg-gray-900 border border-gray-800 hover:bg-gray-800 text-gray-400 hover:text-white transition-all focus:outline-none"
+                  >
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+              
+              <div className="flex justify-between items-center gap-1.5 overflow-x-auto">
+                {getDaysForOffsetWeek(weekOffset).map((day, idx) => {
+                  const isSelected = isSameDay(day, selectedDate);
+                  const isToday = isSameDay(day, new Date());
+                  const dailyTasks = getDailyWorkload(day);
+                  
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        setSelectedDate(day);
+                        setVisibleDate(day);
+                      }}
+                      className={`flex-1 min-w-[44px] py-2.5 px-1 rounded-xl flex flex-col items-center transition-all ${
+                        isSelected ? 'bg-indigo-650 text-white shadow-lg shadow-indigo-650/30 scale-[1.04]' :
+                        isToday ? 'bg-indigo-950/30 border border-indigo-900/50 text-indigo-300' :
+                        'bg-gray-900/20 border border-transparent text-gray-400 hover:bg-gray-900/50 hover:text-gray-200'
+                      }`}
+                    >
+                      <span className="text-[9px] uppercase font-bold tracking-wider">{day.toLocaleDateString([], { weekday: 'short' })}</span>
+                      <span className="text-sm font-extrabold mt-0.5">{day.getDate()}</span>
+                      
+                      {/* Workload Indicator Dots */}
+                      <div className="flex gap-0.5 mt-1.5 h-1 justify-center items-center">
+                        {dailyTasks.slice(0, 3).map((t, tIdx) => {
+                          let dotColor = "bg-gray-500/60";
+                          if (t.energy_level === 'crimson') dotColor = "bg-red-400";
+                          else if (t.energy_level === 'teal') dotColor = "bg-teal-400";
+                          else if (t.constraint_type === 'hard') dotColor = "bg-indigo-400";
+                          
+                          return <span key={tIdx} className={`h-1 w-1 rounded-full ${dotColor}`} />;
+                        })}
+                        {dailyTasks.length > 3 && <span className="text-[7px] font-bold opacity-70">+</span>}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {viewMode === 'calendar' && (
             <div className="mb-6 animate-slide">
               <div className="grid grid-cols-7 gap-1 text-center mb-1">
@@ -1009,21 +1137,16 @@ export default function App() {
             </div>
           )}
 
-          {viewMode === 'calendar' && (
-            <div className="mb-4 text-xs font-semibold text-gray-400">
-              Showing tasks for {selectedDate.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
-            </div>
-          )}
+          <div className="mb-4 text-xs font-semibold text-gray-400">
+            Showing tasks for {selectedDate.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
+          </div>
 
           {/* Timeline Cards */}
           <div className="space-y-4 relative pl-4 border-l border-gray-800">
             {(() => {
               const filteredTasks = tasks.filter(t => {
-                if (viewMode !== 'calendar') return true;
                 const tDate = new Date(t.start_time);
-                return tDate.getDate() === selectedDate.getDate() &&
-                       tDate.getMonth() === selectedDate.getMonth() &&
-                       tDate.getFullYear() === selectedDate.getFullYear();
+                return isSameDay(tDate, selectedDate);
               });
 
               if (filteredTasks.length === 0) {
@@ -1037,32 +1160,71 @@ export default function App() {
                 );
               }
 
-              return filteredTasks.map((task) => {
+              const sortedTasks = [...filteredTasks].sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+              const now = currentTime;
+              const isSelectedToday = isSameDay(selectedDate, now);
+              const nowMinutes = now.getHours() * 60 + now.getMinutes();
+              let timeIndicatorRendered = false;
+
+              const elements = [];
+
+              sortedTasks.forEach((task) => {
+                const taskStart = new Date(task.start_time);
+                const startMinutes = taskStart.getHours() * 60 + taskStart.getMinutes();
+
+                if (isSelectedToday && !timeIndicatorRendered && nowMinutes < startMinutes) {
+                  elements.push(
+                    <div key="time-indicator" className="relative my-2 py-1.5 flex items-center justify-center">
+                      <div className="absolute left-[-21px] h-3 w-3 rounded-full bg-red-500 ring-4 ring-red-500/20 animate-pulse"></div>
+                      <div className="w-full h-[1px] bg-gradient-to-r from-red-500/50 to-transparent"></div>
+                      <span className="absolute right-4 text-[9px] bg-red-950/80 border border-red-900 text-red-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
+                        Current Time: {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                  );
+                  timeIndicatorRendered = true;
+                }
+
                 const isCrimson = task.energy_level === 'crimson';
                 const isTeal = task.energy_level === 'teal';
+                const isCompleted = task.status === 'completed';
                 const isExpanded = expandedTasks[task.id];
-                
+
                 let cardClass = "bg-gray-900/40 border-gray-800 backdrop-blur-md text-gray-300 border-l-4 border-l-gray-500";
-                
-                if (isCrimson) {
+                if (isCompleted) {
+                  cardClass = "bg-gray-950/20 border-gray-950 text-gray-500 border-l-4 border-l-gray-700 opacity-60";
+                } else if (isCrimson) {
                   cardClass = "bg-red-950/20 border-red-600/50 backdrop-blur-md shadow-sm shadow-red-950/20 text-red-200 border-l-4 border-l-red-600";
                 } else if (isTeal) {
                   cardClass = "bg-teal-950/20 border-teal-600/50 backdrop-blur-md shadow-sm shadow-teal-950/20 text-teal-200 border-l-4 border-l-teal-600";
                 }
-                
-                return (
+
+                elements.push(
                   <div 
                     key={task.id} 
                     className={`relative p-4 rounded-xl transition-all hover:scale-[1.01] flex items-start space-x-4 border ${cardClass} float-ui`}
                   >
                     <div className={`absolute -left-[22px] top-5 h-3.5 w-3.5 rounded-full bg-darkspace border-2 ${
-                      isCrimson ? 'border-red-600' : isTeal ? 'border-teal-600' : 'border-gray-500'
+                      isCompleted ? 'border-green-500 bg-green-500' : isCrimson ? 'border-red-600' : isTeal ? 'border-teal-600' : 'border-gray-500'
                     }`}></div>
+                    
+                    <button
+                      type="button"
+                      onClick={() => handleCompleteTask(task.id, task.status)}
+                      className="mt-0.5 focus:outline-none flex-shrink-0 animate-pulse"
+                      title={isCompleted ? "Mark Pending" : "Mark Completed"}
+                    >
+                      <CheckCircle className={`h-5 w-5 transition-all ${
+                        isCompleted ? 'text-green-500 fill-green-500/20' : 'text-gray-600 hover:text-green-400'
+                      }`} />
+                    </button>
                     
                     <div className="flex-1">
                       <div className="flex justify-between items-start">
-                        <div className="cursor-pointer select-text" onClick={() => toggleTaskExpand(task.id)}>
-                          <h3 className="font-semibold text-base text-gray-100 hover:text-indigo-400 transition-all flex items-center space-x-1.5">
+                        <div className="cursor-pointer select-text flex-1" onClick={() => toggleTaskExpand(task.id)}>
+                          <h3 className={`font-semibold text-base hover:text-indigo-400 transition-all flex items-center space-x-1.5 ${
+                            isCompleted ? 'text-gray-500 line-through' : 'text-gray-100'
+                          }`}>
                             <span>{task.title}</span>
                             {task.description && (
                               <ChevronDown className={`h-3.5 w-3.5 text-gray-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
@@ -1078,6 +1240,7 @@ export default function App() {
                             {task.constraint_type.toUpperCase()}
                           </span>
                           <button 
+                            type="button"
                             onClick={() => handleDeleteTask(task.id)}
                             className="p-1 rounded text-gray-505 hover:text-red-400 hover:bg-gray-800/60 transition-all focus:outline-none"
                             title="Delete Task"
@@ -1101,8 +1264,8 @@ export default function App() {
                         
                         {task.energy_level !== 'none' && (
                           <span className="flex items-center space-x-1">
-                            <Zap className={`h-3.5 w-3.5 ${isCrimson ? 'text-red-400' : 'text-teal-400'}`} />
-                            <span className={isCrimson ? 'text-red-400' : 'text-teal-400'}>
+                            <Zap className={`h-3.5 w-3.5 ${isCompleted ? 'text-gray-600' : isCrimson ? 'text-red-400' : 'text-teal-400'}`} />
+                            <span className={isCompleted ? 'text-gray-500' : isCrimson ? 'text-red-400' : 'text-teal-400'}>
                               {isCrimson ? 'High Study' : 'Low Reading'}
                             </span>
                           </span>
@@ -1118,6 +1281,18 @@ export default function App() {
                   </div>
                 );
               });
+
+              if (isSelectedToday && !timeIndicatorRendered && sortedTasks.length > 0) {
+                elements.push(
+                  <div key="time-indicator" className="relative my-2 py-1.5 flex items-center justify-center">
+                    <div className="absolute left-[-21px] h-3 w-3 rounded-full bg-red-500 ring-4 ring-red-500/20 animate-pulse"></div>
+                    <div className="w-full h-[1px] bg-gradient-to-r from-red-500/50 to-transparent"></div>
+                    <span className="absolute right-4 text-[9px] bg-red-950/80 border border-red-900 text-red-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
+                      Current Time: {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                );
+              }
             })()}
           </div>
         </section>

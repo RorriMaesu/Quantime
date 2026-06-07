@@ -287,6 +287,12 @@ class TaskSchema(BaseModel):
     constraint_type: str = "soft"
     status: str = "pending"
 
+class TaskUpdateSchema(BaseModel):
+    status: Optional[str] = None
+    title: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+
 @app.get("/health")
 def health_check():
     """
@@ -799,6 +805,71 @@ def delete_task_endpoint(task_id: str):
             logger.error(f"Failed to mirror task deletion to Firestore: {fe}")
             
     return {"status": "success", "message": f"Task '{row['title']}' deleted successfully."}
+
+@app.patch("/api/tasks/{task_id}")
+def update_task_endpoint(task_id: str, payload: TaskUpdateSchema):
+    """Updates a task's fields locally and mirrors to Firestore."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT id, title, status, source_event_id, start_time, end_time FROM tasks WHERE id = ?", (task_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Task not found.")
+            
+        update_fields = []
+        params = []
+        if payload.status is not None:
+            update_fields.append("status = ?")
+            params.append(payload.status)
+        if payload.title is not None:
+            update_fields.append("title = ?")
+            params.append(payload.title)
+        if payload.start_time is not None:
+            update_fields.append("start_time = ?")
+            params.append(payload.start_time)
+        if payload.end_time is not None:
+            update_fields.append("end_time = ?")
+            params.append(payload.end_time)
+            
+        if not update_fields:
+            raise HTTPException(status_code=400, detail="No fields to update.")
+            
+        update_fields.append("updated_at = ?")
+        params.append(time.time())
+        params.append(task_id)
+        
+        query = f"UPDATE tasks SET {', '.join(update_fields)} WHERE id = ?"
+        cursor.execute(query, tuple(params))
+        
+        # If task is completed and Google Calendar sync is active, update Google Calendar
+        if payload.status == "completed" and row["source_event_id"]:
+            try:
+                GoogleCalendarSync.patch_calendar_event(
+                    row["source_event_id"], 
+                    row["start_time"], 
+                    row["end_time"], 
+                    f"[COMPLETED] {row['title']}"
+                )
+            except Exception as ge:
+                logger.error(f"Failed to patch calendar event on completion: {ge}")
+                
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
+        
+    # Mirror update to Firestore
+    if db_firestore is not None:
+        try:
+            task_ref = db_firestore.collection("users").document(MOCK_USER_ID).collection("tasks").document(task_id)
+            task_ref.update({k: v for k, v in payload.dict().items() if v is not None})
+        except Exception as fe:
+            logger.error(f"Failed to mirror task update to Firestore: {fe}")
+            
+    return {"status": "success", "message": f"Task '{task_id}' updated successfully."}
 
 @app.get("/api/chats")
 def list_chats():
