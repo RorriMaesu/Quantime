@@ -19,7 +19,8 @@ import {
   ChevronRight,
   AlertTriangle,
   Trash2,
-  Eraser
+  Eraser,
+  Settings
 } from 'lucide-react';
 
 // Optional: Import Firebase SDK components if initialized client-side
@@ -1233,7 +1234,7 @@ export default function App() {
                 className="h-9 w-9 rounded-lg bg-gray-900 border border-gray-800 flex items-center justify-center text-indigo-400 hover:text-indigo-300 hover:border-gray-750 transition-all focus:outline-none"
                 title="Settings & Integrations"
               >
-                <User className="h-4 w-4" />
+                <Settings className="h-4 w-4" />
               </button>
               
               {showSettings && (
