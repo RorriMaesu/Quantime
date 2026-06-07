@@ -1161,38 +1161,18 @@ async def voice_chat_websocket(websocket: WebSocket):
     await websocket.accept()
     logger.info("Voice chat WebSocket connection established.")
     
-    silence_detector = SimpleSilenceDetector(sample_rate=16000)
-    audio_buffer = bytearray()
     interrupt_event = asyncio.Event()
     assistant_speaking = False
     
     async def receive_loop():
-        nonlocal assistant_speaking, audio_buffer
+        nonlocal assistant_speaking
         try:
             while True:
                 message = await websocket.receive()
                 
                 if "bytes" in message:
-                    data = message["bytes"]
-                    if not data:
-                        continue
-                    
-                    if assistant_speaking:
-                        # Direct VAD check: Check RMS energy of the chunk
-                        import numpy as np
-                        samples = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
-                        if len(samples) > 0:
-                            rms = np.sqrt(np.mean(samples**2))
-                            if rms > 0.015:
-                                logger.info("User interrupted (barge-in detected via VAD). Setting interrupt event...")
-                                interrupt_event.set()
-                                continue
-                                
-                    audio_buffer.extend(data)
-                    
-                    if silence_detector.is_silence(data):
-                        logger.info("Silence detected. Triggering LLM voice turn...")
-                        asyncio.create_task(run_agent_turn())
+                    # Ignore binary audio stream since we use browser-native speech recognition
+                    continue
                         
                 elif "text" in message:
                     try:
@@ -1200,6 +1180,11 @@ async def voice_chat_websocket(websocket: WebSocket):
                         if msg_json.get("type") == "interrupt":
                             logger.info("User interrupted (barge-in detected via message). Setting interrupt event...")
                             interrupt_event.set()
+                        elif msg_json.get("type") == "prompt":
+                            prompt_text = msg_json.get("prompt", "")
+                            if prompt_text:
+                                logger.info(f"Received speech prompt: {prompt_text}")
+                                asyncio.create_task(run_agent_turn(prompt_text))
                     except Exception as je:
                         logger.error(f"Error parsing voice control message: {je}")
                         
@@ -1208,18 +1193,13 @@ async def voice_chat_websocket(websocket: WebSocket):
         except Exception as e:
             logger.error(f"Error in WebSocket receive loop: {e}")
             
-    async def run_agent_turn():
-        nonlocal assistant_speaking, audio_buffer
-        if not audio_buffer:
+    async def run_agent_turn(prompt_text: str):
+        nonlocal assistant_speaking
+        if assistant_speaking or not prompt_text:
             return
             
         assistant_speaking = True
         interrupt_event.clear()
-        
-        # Convert PCM to WAV
-        wav_bytes = pcm_to_wav(bytes(audio_buffer), 16000)
-        audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
-        audio_buffer.clear()
         
         history = get_recent_chat_history(limit=5)
         await websocket.send_json({"type": "status", "status": "thinking"})
@@ -1232,7 +1212,7 @@ async def voice_chat_websocket(websocket: WebSocket):
         
         def run_stream():
             try:
-                generator = generate_agent_stream(prompt="", chat_history=history, audio_b64=audio_b64)
+                generator = generate_agent_stream(prompt=prompt_text, chat_history=history, audio_b64=None)
                 for channel, chunk in generator:
                     asyncio.run_coroutine_threadsafe(chunk_queue.put((channel, chunk)), loop)
             except Exception as ex:
@@ -1280,7 +1260,7 @@ async def voice_chat_websocket(websocket: WebSocket):
                     
             if not interrupt_event.is_set():
                 chat_id = f"voice_chat_{int(time.time() * 1000)}"
-                update_chat_record(f"user_{chat_id}", "user", "[Voice Input]", "", "done")
+                update_chat_record(f"user_{chat_id}", "user", prompt_text, "", "done")
                 update_chat_record(chat_id, "agent", text_buffer, "", "done")
                 await websocket.send_json({"type": "status", "status": "idle"})
                 
