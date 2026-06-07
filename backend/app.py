@@ -37,6 +37,30 @@ app.add_middleware(
 # Initialize local SQLite database schemas
 init_db()
 
+@app.on_event("startup")
+async def startup_event():
+    """Asynchronously pre-loads the Ollama model on startup to eliminate first-use latency."""
+    def preload_model():
+        import urllib.request
+        import json
+        try:
+            url = "http://localhost:11434/api/generate"
+            payload = {"model": "gemma4-agent-mtp", "keep_alive": -1}
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                resp.read()
+            logger.info("Ollama model pre-loaded successfully in VRAM.")
+        except Exception as e:
+            logger.warning(f"Failed to pre-load Ollama model: {e}")
+
+    import threading
+    threading.Thread(target=preload_model, daemon=True).start()
+
 # =====================================================================
 # Dual-Mode Firebase Initialization (With Local Mock Fallback)
 # =====================================================================

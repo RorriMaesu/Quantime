@@ -514,7 +514,8 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = []) 
         "model": MODEL_NAME,
         "messages": messages,
         "tools": TOOL_SCHEMAS,
-        "stream": True
+        "stream": True,
+        "keep_alive": -1
     }
     
     try:
