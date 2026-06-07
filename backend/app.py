@@ -140,6 +140,44 @@ def update_chat_record(chat_id: str, sender: str = 'agent', text: str = "", thou
     finally:
         conn.close()
 
+def get_recent_chat_history(limit: int = 10, exclude_chat_id: Optional[str] = None) -> List[Dict[str, str]]:
+    """Loads recent chat history from SQLite, enforcing a 2-hour session decay window."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        session_cutoff = time.time() - 7200
+        if exclude_chat_id:
+            cursor.execute("""
+                SELECT id, sender, text 
+                FROM chats 
+                WHERE status = 'done' AND text IS NOT NULL AND text != ''
+                  AND timestamp >= ?
+                  AND id != ? AND id != ?
+                ORDER BY timestamp DESC 
+                LIMIT ?
+            """, (session_cutoff, exclude_chat_id, f"user_{exclude_chat_id}", limit))
+        else:
+            cursor.execute("""
+                SELECT id, sender, text 
+                FROM chats 
+                WHERE status = 'done' AND text IS NOT NULL AND text != ''
+                  AND timestamp >= ?
+                ORDER BY timestamp DESC 
+                LIMIT ?
+            """, (session_cutoff, limit))
+        
+        rows = cursor.fetchall()
+        history = []
+        for row in reversed(rows):
+            role = "user" if row["sender"] == "user" else "assistant"
+            history.append({"role": role, "content": row["text"]})
+        return history
+    except Exception as e:
+        logger.error(f"Failed to fetch chat history: {e}")
+        return []
+    finally:
+        conn.close()
+
 async def handle_agent_processing(chat_id: str, prompt: str, chat_history: List[Dict[str, str]], doc_ref) -> None:
     """
     Orchestration loop that calls the speculative reasoning agent,
@@ -152,6 +190,10 @@ async def handle_agent_processing(chat_id: str, prompt: str, chat_history: List[
     
     # Store user message locally to sync chat context
     update_chat_record(f"user_{chat_id}", 'user', prompt, '', 'done')
+    
+    # Populate chat history if empty
+    if not chat_history:
+        chat_history = get_recent_chat_history(limit=10, exclude_chat_id=chat_id)
     
     # Immediately flip status to processing (forces write bypass to guarantee state transition)
     update_chat_record(chat_id, 'agent', '', '', 'processing')

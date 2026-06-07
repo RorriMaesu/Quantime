@@ -247,6 +247,63 @@ class TestQuantimeBackend(unittest.TestCase):
             
         finally:
             urllib.request.urlopen = original_urlopen
+
+    def test_chat_history_retention_and_decay(self):
+        """Verify get_recent_chat_history maps roles correctly, respects decay window and exclusions."""
+        from backend.app import get_recent_chat_history, update_chat_record
+        import backend.app
+        
+        original_get_db = backend.app.get_db_connection
+        backend.app.get_db_connection = lambda: get_db_connection(self.db_path)
+        
+        try:
+            # 1. Insert chat message from 3 hours ago (should be excluded)
+            conn = get_db_connection(self.db_path)
+            cursor = conn.cursor()
+            three_hours_ago = time.time() - 10800
+            cursor.execute(
+                "INSERT INTO chats (id, sender, text, thoughts, status, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+                ("chat_old", "user", "I want pizza", "", "done", three_hours_ago)
+            )
+            
+            # 2. Insert chat messages from 10 minutes ago (should be included)
+            ten_mins_ago = time.time() - 600
+            cursor.execute(
+                "INSERT INTO chats (id, sender, text, thoughts, status, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+                ("chat_user_1", "user", "schedule study time", "", "done", ten_mins_ago)
+            )
+            cursor.execute(
+                "INSERT INTO chats (id, sender, text, thoughts, status, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+                ("chat_agent_1", "agent", "how long?", "", "done", ten_mins_ago + 10)
+            )
+            
+            # 3. Insert current active message that is currently pending/processing
+            cursor.execute(
+                "INSERT INTO chats (id, sender, text, thoughts, status, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+                ("chat_active", "user", "1 hour", "", "pending", time.time())
+            )
+            conn.commit()
+            conn.close()
+            
+            # Query history
+            history = get_recent_chat_history(limit=5)
+            
+            # Verify "I want pizza" (old) is excluded, pending is excluded
+            self.assertEqual(len(history), 2)
+            self.assertEqual(history[0]["role"], "user")
+            self.assertEqual(history[0]["content"], "schedule study time")
+            self.assertEqual(history[1]["role"], "assistant")
+            self.assertEqual(history[1]["content"], "how long?")
+            
+            # Query with exclusion (excluding user chat 1)
+            history_excl = get_recent_chat_history(limit=5, exclude_chat_id="chat_user_1")
+            self.assertEqual(len(history_excl), 1)
+            self.assertEqual(history_excl[0]["role"], "assistant")
+            self.assertEqual(history_excl[0]["content"], "how long?")
+            print("[OK] Chat history retention, session decay, and exclusions verified successfully.")
+            
+        finally:
+            backend.app.get_db_connection = original_get_db
  
 if __name__ == "__main__":
     unittest.main()
