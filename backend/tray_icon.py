@@ -5,8 +5,21 @@ import time
 import subprocess
 import webbrowser
 import threading
+import socket
 import pystray
 from PIL import Image, ImageDraw
+
+_lock_socket = None
+
+def lock_single_instance():
+    global _lock_socket
+    try:
+        _lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        _lock_socket.bind(('127.0.0.1', 49999))
+        _lock_socket.listen(1)
+    except socket.error:
+        # Silently exit if another instance is already running
+        sys.exit(0)
 
 # Add directory root to path
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -118,6 +131,7 @@ def on_exit(icon, item):
     sys.exit(0)
 
 def main():
+    lock_single_instance()
     start_services()
     
     # Configure the system tray menu
