@@ -23,12 +23,13 @@ def get_tts_pipeline():
     return _kokoro_pipeline
 
 def pcm_to_wav(pcm_data: bytes, sample_rate: int = 16000) -> bytes:
-    """Converts 16-bit integer mono PCM bytes into 32-bit float WAV normalized to [-1, 1] using soundfile."""
-    import soundfile as sf
-    # Convert 16-bit integer PCM to 32-bit float normalized to [-1.0, 1.0]
-    samples = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32) / 32768.0
+    """Wraps raw mono PCM bytes in a WAV container."""
     wav_buf = io.BytesIO()
-    sf.write(wav_buf, samples, sample_rate, format='WAV', subtype='FLOAT')
+    with wave.open(wav_buf, 'wb') as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2) # 16-bit PCM
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(pcm_data)
     return wav_buf.getvalue()
 
 def synthesize_text_to_pcm(text: str, voice: str = 'af_heart') -> bytes:

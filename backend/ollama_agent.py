@@ -609,7 +609,7 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], 
         
     user_msg = {"role": "user", "content": agent_prompt}
     if audio_b64:
-        user_msg["images"] = [audio_b64]
+        user_msg["audios"] = [audio_b64]
     messages.append(user_msg)
     
     def chat_loop(current_messages: List[Dict[str, Any]], depth: int = 0) -> Generator[Tuple[str, str], None, None]:

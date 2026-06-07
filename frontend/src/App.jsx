@@ -106,23 +106,13 @@ export default function App() {
   const [activeVoiceThoughts, setActiveVoiceThoughts] = useState("");
   const wsRef = useRef(null);
   const audioContextRef = useRef(null);
-  const processorRef = useRef(null);
-  const micStreamRef = useRef(null);
   const audioQueueRef = useRef([]);
   const isPlayingRef = useRef(false);
   const activeAudioSourceRef = useRef(null);
+  const recognitionRef = useRef(null);
 
   const startVoiceChat = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
-      });
-      micStreamRef.current = stream;
-      
       const wsUrl = `ws://${window.location.hostname}:8000/api/voice-chat`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
@@ -133,6 +123,7 @@ export default function App() {
         setVoiceStatus("recording");
         setActiveVoiceText("");
         setActiveVoiceThoughts("");
+        startSpeechRecognition();
       };
       
       ws.onmessage = async (event) => {
@@ -142,6 +133,12 @@ export default function App() {
           if (msg.status === "thinking") {
             setActiveVoiceText("");
             setActiveVoiceThoughts("");
+          }
+          
+          if (msg.status === "speaking") {
+            pauseSpeechRecognition();
+          } else if (msg.status === "idle" || msg.status === "recording") {
+            resumeSpeechRecognition();
           }
         } else if (msg.type === "text") {
           setActiveVoiceText(prev => prev + msg.text);
@@ -158,46 +155,88 @@ export default function App() {
         stopVoiceChat();
       };
       
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-      audioContextRef.current = audioCtx;
-      
-      const source = audioCtx.createMediaStreamSource(stream);
-      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-      processorRef.current = processor;
-      
-      processor.onaudioprocess = (e) => {
-        const inputData = e.inputBuffer.getChannelData(0);
-        const pcmData = new Int16Array(inputData.length);
-        let rmsSum = 0;
-        for (let i = 0; i < inputData.length; i++) {
-          const s = Math.max(-1, Math.min(1, inputData[i]));
-          pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-          rmsSum += s * s;
-        }
-        const rms = Math.sqrt(rmsSum / inputData.length);
-        
-        // If user is speaking (rms > 0.015) while assistant is playing audio, interrupt locally
-        if (isPlayingRef.current && rms > 0.015) {
-          console.log("Local barge-in triggered: User speaking detected during playback. Halting assistant speech.");
-          stopAudioPlayback();
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "interrupt" }));
-          }
-        }
-        
-        // Do not stream mic data to the server if the assistant is speaking or thinking
-        if (ws.readyState === WebSocket.OPEN && !isPlayingRef.current && voiceStatus !== "thinking" && voiceStatus !== "speaking") {
-          ws.send(pcmData.buffer);
-        }
-      };
-      
-      source.connect(processor);
-      processor.connect(audioCtx.destination);
-      
     } catch (err) {
       console.error("Failed to start voice chat:", err);
-      alert("Microphone permission denied or audio device not found.");
+      alert("Microphone permission denied or speech recognition not supported.");
       stopVoiceChat();
+    }
+  };
+
+  const startSpeechRecognition = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      console.warn("Speech Recognition not supported in this browser.");
+      return;
+    }
+    
+    const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+    
+    recognition.onresult = (event) => {
+      if (isPlayingRef.current) {
+        return;
+      }
+      
+      let interimTranscript = '';
+      let finalTranscript = '';
+      
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript;
+        } else {
+          interimTranscript += event.results[i][0].transcript;
+        }
+      }
+      
+      if (finalTranscript || interimTranscript) {
+        setActiveVoiceText(finalTranscript || interimTranscript);
+      }
+      
+      if (finalTranscript.trim()) {
+        console.log("Speech recognition final result:", finalTranscript);
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ type: "prompt", prompt: finalTranscript.trim() }));
+        }
+        recognition.stop();
+      }
+    };
+    
+    recognition.onerror = (event) => {
+      console.error("Speech recognition error:", event.error);
+    };
+    
+    recognition.onend = () => {
+      // Restart recognition if voice is active and we are not speaking/thinking
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && !isPlayingRef.current && !activeAudioSourceRef.current) {
+        try {
+          recognition.start();
+        } catch (e) {}
+      }
+    };
+    
+    try {
+      recognition.start();
+    } catch (e) {
+      console.error("Error starting speech recognition:", e);
+    }
+  };
+
+  const pauseSpeechRecognition = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {}
+    }
+  };
+
+  const resumeSpeechRecognition = () => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && recognitionRef.current) {
+      try {
+        recognitionRef.current.start();
+      } catch (e) {}
     }
   };
 
@@ -235,6 +274,7 @@ export default function App() {
           playNextInQueue();
         } else {
           setVoiceStatus("recording");
+          resumeSpeechRecognition();
         }
       };
       source.start(0);
@@ -263,13 +303,9 @@ export default function App() {
     setVoiceStatus("idle");
     stopAudioPlayback();
     
-    if (processorRef.current) {
-      try { processorRef.current.disconnect(); } catch(e){}
-      processorRef.current = null;
-    }
-    if (micStreamRef.current) {
-      try { micStreamRef.current.getTracks().forEach(track => track.stop()); } catch(e){}
-      micStreamRef.current = null;
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch(e){}
+      recognitionRef.current = null;
     }
     if (wsRef.current) {
       try { wsRef.current.close(); } catch(e){}
@@ -2828,7 +2864,7 @@ export default function App() {
                 <Mic className="h-8 w-8" />
               </div>
               <span className="text-xs text-gray-505 mt-3 font-semibold font-mono">
-                {voiceStatus === 'recording' ? 'Speak now... (Silence ends turn)' : voiceStatus === 'thinking' ? 'Gemma 4 is thinking...' : 'Assistant is speaking (Tap mic to interrupt)...'}
+                {voiceStatus === 'recording' ? 'Speak now... (Stop speaking to send)' : voiceStatus === 'thinking' ? 'Gemma 4 is thinking...' : 'Assistant is speaking (Tap mic to interrupt)...'}
               </span>
             </div>
 
