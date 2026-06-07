@@ -201,7 +201,7 @@ export default function App() {
       const startIso = new Date(Date.UTC(year, month, 1 - 2, 0, 0, 0)).toISOString();
       const endIso = new Date(Date.UTC(year, month + 1, 0 + 2, 23, 59, 59)).toISOString();
       
-      const resp = await fetch(`${API_BASE}/api/tasks?start_date=${startIso}&end_date=${endIso}`);
+      const resp = await fetch(`${API_BASE}/api/tasks?start_date=${startIso}&end_date=${endIso}&_t=${Date.now()}`);
       if (resp.ok) {
         const data = await resp.json();
         const sorted = data.tasks.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));

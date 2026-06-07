@@ -51,6 +51,13 @@ self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET' || !event.request.url.startsWith(self.location.origin)) {
     return;
   }
+  
+  // Exclude API and Auth endpoints from Service Worker caching
+  const url = new URL(event.request.url);
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/auth/')) {
+    return;
+  }
+  
   event.respondWith(
     fetch(event.request)
       .then(response => {
