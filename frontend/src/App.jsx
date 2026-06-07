@@ -740,60 +740,126 @@ export default function App() {
 
   const renderMessageContent = (text) => {
     if (!text) return null;
-    
-    const paragraphs = text.split('\n\n');
-    
-    return paragraphs.map((para, pIdx) => {
-      const lines = para.split('\n');
-      
-      // Check if it's a bulleted list (all lines start with * or -)
-      const isList = lines.length > 0 && lines.every(line => {
-        const trimmed = line.trim();
-        return trimmed === "" || trimmed.startsWith('* ') || trimmed.startsWith('- ');
-      });
-      
-      if (isList) {
+
+    const lines = text.split('\n');
+    const elements = [];
+    let currentList = null; // { type: 'ul' | 'ol', items: [] }
+
+    const flushList = (key) => {
+      if (!currentList) return null;
+      const listKey = `list_${key}`;
+      const listContent = currentList.items.map((item, idx) => {
+        const parts = item.split(/(\*\*[^*]+\*\*)/g);
         return (
-          <ul key={pIdx} className="list-disc pl-5 space-y-1.5 my-2 text-left">
-            {lines.map((line, lIdx) => {
-              const trimmed = line.trim();
-              if (trimmed === "") return null;
-              const cleanLine = trimmed.substring(2);
-              const parts = cleanLine.split(/(\*\*[^*]+\*\*)/g);
-              return (
-                <li key={lIdx} className="text-gray-100">
-                  {parts.map((part, partIdx) => {
-                    if (part.startsWith('**') && part.endsWith('**')) {
-                      return <strong key={partIdx} className="font-extrabold text-indigo-300">{part.slice(2, -2)}</strong>;
-                    }
-                    return part;
-                  })}
-                </li>
-              );
+          <li key={idx} className="text-gray-100 mb-1 last:mb-0">
+            {parts.map((part, partIdx) => {
+              if (part.startsWith('**') && part.endsWith('**')) {
+                return <strong key={partIdx} className="font-extrabold text-indigo-300">{part.slice(2, -2)}</strong>;
+              }
+              return part;
             })}
-          </ul>
+          </li>
         );
-      }
+      });
+
+      const listElement = currentList.type === 'ul' ? (
+        <ul key={listKey} className="list-disc pl-5 space-y-1 my-2 text-left">
+          {listContent}
+        </ul>
+      ) : (
+        <ol key={listKey} className="list-decimal pl-5 space-y-1 my-2 text-left">
+          {listContent}
+        </ol>
+      );
       
-      return (
-        <p key={pIdx} className="leading-relaxed mb-2.5 last:mb-0 text-left">
-          {lines.map((line, lIdx) => {
-            const parts = line.split(/(\*\*[^*]+\*\*)/g);
-            return (
-              <span key={lIdx} className="block last:inline">
-                {parts.map((part, partIdx) => {
-                  if (part.startsWith('**') && part.endsWith('**')) {
-                    return <strong key={partIdx} className="font-extrabold text-indigo-300">{part.slice(2, -2)}</strong>;
-                  }
-                  return part;
-                })}
-                {lIdx < lines.length - 1 && <br />}
-              </span>
-            );
+      currentList = null;
+      return listElement;
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      // Handle empty lines
+      if (trimmed === "") {
+        const listEl = flushList(i);
+        if (listEl) elements.push(listEl);
+        elements.push(<div key={`spacer_${i}`} className="h-2" />);
+        continue;
+      }
+
+      // Handle headers (###, ##, #)
+      const headerMatch = line.match(/^(#{1,6})\s+(.+)$/);
+      if (headerMatch) {
+        const listEl = flushList(i);
+        if (listEl) elements.push(listEl);
+        
+        const headerText = headerMatch[2];
+        const parts = headerText.split(/(\*\*[^*]+\*\*)/g);
+        const headerInline = parts.map((part, partIdx) => {
+          if (part.startsWith('**') && part.endsWith('**')) {
+            return <strong key={partIdx} className="font-extrabold text-indigo-300">{part.slice(2, -2)}</strong>;
+          }
+          return part;
+        });
+
+        elements.push(
+          <h4 key={`header_${i}`} className="text-sm font-extrabold text-indigo-400 mt-4 mb-2 text-left">
+            {headerInline}
+          </h4>
+        );
+        continue;
+      }
+
+      // Handle Unordered Lists (* or -)
+      const ulMatch = line.match(/^[\s]*[-*]\s+(.+)$/);
+      if (ulMatch) {
+        if (currentList && currentList.type !== 'ul') {
+          elements.push(flushList(i));
+        }
+        if (!currentList) {
+          currentList = { type: 'ul', items: [] };
+        }
+        currentList.items.push(ulMatch[1]);
+        continue;
+      }
+
+      // Handle Ordered Lists (1., 2., etc.)
+      const olMatch = line.match(/^[\s]*\d+\.\s+(.+)$/);
+      if (olMatch) {
+        if (currentList && currentList.type !== 'ol') {
+          elements.push(flushList(i));
+        }
+        if (!currentList) {
+          currentList = { type: 'ol', items: [] };
+        }
+        currentList.items.push(olMatch[1]);
+        continue;
+      }
+
+      // If it's a regular text line, flush any active list first
+      const listEl = flushList(i);
+      if (listEl) elements.push(listEl);
+
+      // Render regular text line
+      const parts = line.split(/(\*\*[^*]+\*\*)/g);
+      elements.push(
+        <p key={`p_${i}`} className="leading-relaxed mb-1.5 last:mb-0 text-left">
+          {parts.map((part, partIdx) => {
+            if (part.startsWith('**') && part.endsWith('**')) {
+              return <strong key={partIdx} className="font-extrabold text-indigo-300">{part.slice(2, -2)}</strong>;
+            }
+            return part;
           })}
         </p>
       );
-    });
+    }
+
+    // Flush any remaining list at the end
+    const lastListEl = flushList(lines.length);
+    if (lastListEl) elements.push(lastListEl);
+
+    return elements;
   };
 
   const toggleThinking = (id) => {
