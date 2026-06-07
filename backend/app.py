@@ -382,12 +382,32 @@ def get_oauth_url(request: Request, origin: Optional[str] = None):
     return {"url": url}
 
 @app.get("/auth/callback")
-def oauth_callback(code: str, request: Request, state: Optional[str] = None):
-    """Google OAuth redirect loopback interceptor callback endpoint."""
-    redirect_uri = f"{request.base_url}auth/callback"
+def oauth_callback(
+    request: Request,
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    access_token: Optional[str] = None,
+    refresh_token: Optional[str] = None,
+    expires_in: Optional[int] = None
+):
+    """Google OAuth redirect loopback interceptor callback endpoint supporting both Direct & Proxy modes."""
     try:
-        tokens = GoogleOAuthManager.exchange_code_for_tokens(code, redirect_uri)
-        access_token = tokens.get("access_token")
+        if access_token:
+            # Proxy Mode Callback: Token payload received directly
+            tokens = {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "expires_in": expires_in if expires_in else 3600
+            }
+            GoogleOAuthManager.save_tokens(tokens)
+        elif code:
+            # Direct Mode Callback: Exchange code locally using client secrets
+            redirect_uri = f"{request.base_url}auth/callback"
+            tokens = GoogleOAuthManager.exchange_code_for_tokens(code, redirect_uri)
+            access_token = tokens.get("access_token")
+        else:
+            raise HTTPException(status_code=400, detail="Missing authorization parameters.")
+
         if access_token:
             profile = GoogleOAuthManager.fetch_user_profile(access_token)
             conn = get_db_connection()
@@ -396,11 +416,12 @@ def oauth_callback(code: str, request: Request, state: Optional[str] = None):
                 cursor.execute("INSERT OR REPLACE INTO user_profiles (key, value) VALUES ('user_id', ?)", (profile["user_id"],))
                 cursor.execute("INSERT OR REPLACE INTO user_profiles (key, value) VALUES ('user_name', ?)", (profile["user_name"],))
                 conn.commit()
-                logger.info(f"User profile dynamically synchronized from Google: {profile}")
+                logger.info(f"User profile dynamically synchronized: {profile}")
             except Exception as db_err:
                 logger.error(f"Failed to persist Google profile: {db_err}")
             finally:
                 conn.close()
+
         # Seed Google events
         GoogleCalendarSync.sync_next_7_days()
         
@@ -413,8 +434,8 @@ def oauth_callback(code: str, request: Request, state: Optional[str] = None):
                 
         return RedirectResponse(url=redirect_url)
     except Exception as e:
-        logger.error(f"Callback token exchange failed: {e}")
-        return JSONResponse(status_code=400, content={"error": f"Authorization code exchange failed: {e}"})
+        logger.error(f"Callback authentication failed: {e}")
+        return JSONResponse(status_code=400, content={"error": f"Authentication failed: {e}"})
 
 @app.post("/api/sync")
 def trigger_calendar_sync():

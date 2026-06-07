@@ -83,7 +83,18 @@ class GoogleOAuthManager:
     
     @staticmethod
     def get_auth_url(redirect_uri: str, state: Optional[str] = None) -> str:
-        """Generates Google consent authentication URL."""
+        """Generates Google consent authentication URL, supporting Centralized Proxy Mode."""
+        if not os.path.exists(CREDENTIALS_FILE):
+            # Proxy Mode: Direct the client to the centralized Auth Proxy
+            proxy_base = os.environ.get("QUANTIME_AUTH_PROXY", "https://auth.quantime.app")
+            params = {
+                "redirect_uri": redirect_uri
+            }
+            if state:
+                params["state"] = state
+            return f"{proxy_base}/auth/url?{urllib.parse.urlencode(params)}"
+
+        # Direct Mode (Standard local credentials.json)
         if GOOGLE_LIBS_AVAILABLE and os.path.exists(CREDENTIALS_FILE):
             flow = Flow.from_client_secrets_file(
                 CREDENTIALS_FILE,
@@ -205,30 +216,55 @@ class GoogleOAuthManager:
         conn.close()
         
         # Exchange refresh token for a new access token
-        try:
-            logger.info("Access token expired. Requesting refresh...")
-            secrets = load_client_secrets()
-            payload = {
-                "client_id": secrets["client_id"],
-                "client_secret": secrets["client_secret"],
-                "refresh_token": refresh_token,
-                "grant_type": "refresh_token"
-            }
-            data = urllib.parse.urlencode(payload).encode("utf-8")
-            req = urllib.request.Request(
-                secrets.get("token_uri", "https://oauth2.googleapis.com/token"),
-                data=data,
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-                method="POST"
-            )
-            with urllib.request.urlopen(req) as resp:
-                new_tokens = json.loads(resp.read().decode("utf-8"))
-                
-            GoogleOAuthManager.save_tokens(new_tokens)
-            return GoogleOAuthManager.get_valid_access_token()
-        except Exception as e:
-            logger.error(f"Failed to refresh Google OAuth token: {e}")
-            return None
+        if not os.path.exists(CREDENTIALS_FILE):
+            # Proxy Mode: Request token refresh via the centralized OAuth proxy
+            try:
+                logger.info("Access token expired. Requesting refresh via proxy...")
+                proxy_base = os.environ.get("QUANTIME_AUTH_PROXY", "https://auth.quantime.app")
+                payload = {
+                    "refresh_token": refresh_token
+                }
+                data = urllib.parse.urlencode(payload).encode("utf-8")
+                req = urllib.request.Request(
+                    f"{proxy_base}/auth/refresh",
+                    data=data,
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req) as resp:
+                    new_tokens = json.loads(resp.read().decode("utf-8"))
+                    
+                GoogleOAuthManager.save_tokens(new_tokens)
+                return GoogleOAuthManager.get_valid_access_token()
+            except Exception as e:
+                logger.error(f"Failed to refresh Google OAuth token via proxy: {e}")
+                return None
+        else:
+            # Direct Mode: standard client secret swap
+            try:
+                logger.info("Access token expired. Requesting refresh...")
+                secrets = load_client_secrets()
+                payload = {
+                    "client_id": secrets["client_id"],
+                    "client_secret": secrets["client_secret"],
+                    "refresh_token": refresh_token,
+                    "grant_type": "refresh_token"
+                }
+                data = urllib.parse.urlencode(payload).encode("utf-8")
+                req = urllib.request.Request(
+                    secrets.get("token_uri", "https://oauth2.googleapis.com/token"),
+                    data=data,
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req) as resp:
+                    new_tokens = json.loads(resp.read().decode("utf-8"))
+                    
+                GoogleOAuthManager.save_tokens(new_tokens)
+                return GoogleOAuthManager.get_valid_access_token()
+            except Exception as e:
+                logger.error(f"Failed to refresh Google OAuth token: {e}")
+                return None
 
     @staticmethod
     def fetch_user_profile(token: str) -> Dict[str, Any]:
