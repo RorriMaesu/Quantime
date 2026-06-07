@@ -171,6 +171,12 @@ export default function App() {
     const handlePrompt = (e) => {
       e.preventDefault();
       setDeferredPrompt(e);
+      
+      const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+      const dismissed = sessionStorage.getItem('pwa_prompt_dismissed');
+      if (!isStandalone && !dismissed) {
+        setShowMobileInstallPrompt(true);
+      }
     };
     window.addEventListener('beforeinstallprompt', handlePrompt);
     return () => window.removeEventListener('beforeinstallprompt', handlePrompt);
@@ -191,7 +197,10 @@ export default function App() {
     const dismissed = sessionStorage.getItem('pwa_prompt_dismissed');
     
     if (isMobile && !isStandalone && !dismissed) {
-      setShowMobileInstallPrompt(true);
+      const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+      if (isIOS) {
+        setShowMobileInstallPrompt(true);
+      }
     }
   }, []);
 
