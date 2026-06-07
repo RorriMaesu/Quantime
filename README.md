@@ -4,9 +4,79 @@ Quantime is a local-first, privacy-respecting intelligent scheduling engine and 
 
 ---
 
-## How it Works: System Architecture
+## Quick Start: How to Download & Install (For Everyone)
 
-Quantime consists of three major components designed to run in unison:
+Quantime is designed to be zero-config and beginner-friendly. You do **not** need to install programming tools or set up developer accounts.
+
+1.  **Download**: Go to the [Releases](https://github.com/RorriMaesu/Quantime/releases) page on our GitHub repository and download the latest `QuantimeSetup.exe` installer.
+2.  **Install**: Run `QuantimeSetup.exe` on your Windows PC. The installer will automatically:
+    *   Check for and silently install **Ollama**.
+    *   Download the local Gemma LLM weights and compile the scheduling model.
+    *   Set up local portable Python and Node runtimes headlessly.
+    *   Configure Windows Task Scheduler to start the service silently in the background on boot.
+    *   Create a desktop shortcut.
+3.  **Launch**: Click the desktop icon. Your default browser will open the Quantime PWA Dashboard (`http://localhost:5173`).
+
+---
+
+## Connecting Google Workspace
+
+Quantime supports two sync modes: **Proxy Mode** (Default / Single-Click) and **Direct Mode** (Advanced / Private).
+
+### Option A: Single-Click Sign-In (Default)
+1.  Open the settings popover in the top-right corner of the dashboard.
+2.  Click **Link Google OAuth**.
+3.  Sign in with your personal Google account.
+4.  The system will authorize and immediately sync your next 7 days of calendar events.
+
+### Option B: Custom OAuth Credentials (Advanced / Private)
+If you prefer not to use our centralized proxy helper and want to use your own private Google Cloud project:
+1.  Open [Google Cloud Console](https://console.cloud.google.com/) and create a project.
+2.  Navigate to **API & Services > Credentials > Create Credentials > OAuth client ID**. Set Application Type to **Web application** and add this Redirect URI:
+    `http://localhost:8000/auth/callback`
+3.  On the Quantime dashboard, open **Settings > Custom OAuth Secrets**.
+4.  Input your custom **Project ID**, **Client ID**, and **Client Secret**, and save.
+5.  Click **Link Google OAuth** to authenticate directly via your credentials.
+
+---
+
+## Connecting Your Mobile Phone
+
+To view your timeline and chats on the go:
+1.  Open the dashboard on your PC, click the profile settings, and select **Connect Mobile Phone**.
+2.  Copy the secure public gateway link (e.g. `https://quantime-scheduler-green.loca.lt`) and open it in your mobile browser.
+3.  Input the displayed host PC public IP address to bypass the gateway reminder screen.
+4.  Tap **Add to Home Screen** inside Chrome (Android) or Safari (iOS) to install the standalone app!
+
+---
+
+## Local Development (For Developers)
+
+If you wish to clone the repository and run the codebase manually:
+
+### Prerequisites
+*   [Ollama for Windows](https://ollama.com/)
+*   Python 3.10+
+*   Node.js v18+
+
+### Setup & Run
+1.  Clone the repository:
+    ```bash
+    git clone https://github.com/RorriMaesu/Quantime.git
+    cd Quantime
+    ```
+2.  Run the orchestration launcher script in PowerShell to bootstrap environment files, verify model compilation, install package dependencies, and spin up services:
+    ```powershell
+    powershell -ExecutionPolicy Bypass -File .\run_quantime.ps1
+    ```
+3.  Compile the installer yourself using [Inno Setup Compiler](https://jrsoftware.org/isinfo.php):
+    ```cmd
+    iscc.exe QuantimeSetup.iss
+    ```
+
+---
+
+## System Architecture
 
 ```
                   +-----------------------------------+
@@ -20,64 +90,8 @@ Quantime consists of three major components designed to run in unison:
 |   Ollama LLM      | <-> |  FastAPI Gateway  | <-> |   SQLite Store     |
 | (Port 11434)      |     |    (Port 8000)    |     |   (quantime.db)    |
 +-------------------+     +-------------------+     +--------------------+
-                                    |
-                                    | Google OAuth Consent
-                                    v
-                          +-------------------+
-                          |  Google Calendar  |
-                          |    & Gmail APIs   |
-                          +-------------------+
 ```
 
-1.  **FastAPI Backend Gateway (Port 8000)**: Coordinates all database interactions, Google OAuth credential management, Gmail HTML stripping/parsing, and schedules tasks. It runs the agentic scheduling loop.
-2.  **React PWA Dashboard (Port 5173)**: Renders a timeline view of color-coded tasks, an interactive monthly calendar grid, and the Orchestrator AI chatbot drawer. It caches assets locally to allow offline access.
-3.  **Local AI Reasoning Loop (Ollama)**: Automatically compiles a custom Gemma model with speculative assistant models. The scheduler parses reasoning paths (isolated inside `<|think|>` tags) and outputs clear schedules.
-4.  **Google Workspace Synchronization**: Google Calendar events are imported as hard-constraints (cannot be shifted by the AI). Flexible tasks are arranged matching energy levels (teal for low study effort, crimson for high-energy study tasks) around these events.
-5.  **Multi-Device Synchronization**: Launches a secure **Localtunnel** gateway pointing to your local PWA. This generates a public HTTPS URL (e.g. `https://quantime-scheduler-green.loca.lt`) so you can access the app from your mobile browser anywhere, syncing back to your PC database.
-
----
-
-## Initial Onboarding Setup
-
-When installing Quantime for the first time, you do not need pre-configured Google credentials. 
-
-1.  **Onboarding Wizard**: On first run, the frontend detects missing credentials and displays a setup wizard.
-2.  **Create Google Cloud Credentials**:
-    *   Open the [Google Cloud Console](https://console.cloud.google.com/) and create a project.
-    *   Navigate to **API & Services > Credentials > Create Credentials > OAuth client ID**.
-    *   Set Application Type to **Web application** and add the following Redirect URI:
-        `http://localhost:8000/auth/callback`
-3.  **Submit Secrets**: Copy the **Project ID**, **Client ID**, and **Client Secret** into the setup wizard. The backend automatically saves them to `backend/credentials.json`.
-4.  **Google OAuth Link**: Click the profile menu in the upper-right corner of the dashboard, choose **Link Google OAuth**, and authenticate with your personal Google account.
-
----
-
-## Packaging the Windows Installer
-
-To build a standalone, single-click Windows Installer (`QuantimeSetup.exe`) that packages the entire ecosystem:
-
-1.  Download and install [Inno Setup Compiler](https://jrsoftware.org/isinfo.php).
-2.  Open the terminal in the root folder and compile the `.iss` script:
-    ```cmd
-    iscc.exe QuantimeSetup.iss
-    ```
-3.  This compiles a single executable `dist/QuantimeSetup.exe`.
-4.  **Distribution**: Give this `.exe` file to any user. When clicked, it copies the source code, silently installs Ollama, downloads the Gemma weights, opens firewall exceptions, and schedules the logon startup task.
-
----
-
-## Detailed Feature Guide
-
-### 1. Daily Planner Dashboard
-*   **Timeline View**: Displays a clean, chronological list of scheduled tasks. Color indicators match high-energy crimson tasks and low-energy teal study items.
-*   **Monthly Calendar Grid**: Toggle to the calendar view to navigate months. Selecting any cell displays detail summaries for that specific day.
-*   **Task Deletion**: You can manually delete any custom task by clicking the trash icon.
-
-### 2. Quantime Orchestrator (Chat Interface)
-*   **Intelligent Chat Drawer**: Use the right sidebar to chat with the local AI. Ask to schedule new tasks, move tasks, create dependencies, or summarize emails.
-*   **Gemma 4 Thinking Logs**: Toggle the terminal collapse dropdown below agent answers to inspect the AI's exact speculative logic paths.
-*   **Clear Chat History**: Click the eraser icon in the drawer header to truncate the chat database at any time.
-
-### 3. Mobile Synchronization
-*   Open the profile menu and select **Connect Mobile Phone**.
-*   Verify the host public IP bypass code, open the public URL on your mobile phone, and install the PWA directly to your home screen.
+*   **SQLite Storage**: Uses Write-Ahead Logging (WAL) and busy locks to allow fast concurrent transactions between the agent processor and client sockets.
+*   **Fernet Token Encryption**: Sync access tokens are encrypted before being written to disk using a unique Base64 key generated dynamically on first boot.
+*   **Firestore Circuit Breaker**: Caps write commands to 5 per 10 seconds to protect free Spark tier daily operations if utilizing Firestore client sync.
