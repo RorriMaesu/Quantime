@@ -21,6 +21,26 @@ def lock_single_instance():
         # Silently exit if another instance is already running
         sys.exit(0)
 
+def check_and_start_ollama():
+    """Checks if Ollama is listening on port 11434; if not, attempts to launch it silently."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(1)
+    try:
+        s.connect(('127.0.0.1', 11434))
+        s.close()
+        # Already running
+        return
+    except Exception:
+        pass
+
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    if local_appdata:
+        ollama_path = os.path.join(local_appdata, "Programs", "Ollama", "Ollama.exe")
+        if os.path.exists(ollama_path):
+            creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            # Launch Ollama app silently; it will automatically collapse to the system tray
+            subprocess.Popen([ollama_path], creationflags=creation_flags)
+
 # Add directory root to path
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(base_dir)
@@ -77,6 +97,9 @@ def find_node():
 def start_services():
     global fastapi_proc, vite_proc, tunnel_proc
     creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+    
+    # 0. Check and start Ollama in the background
+    check_and_start_ollama()
     
     # 1. Start FastAPI server using pythonw.exe
     pythonw_exe = os.path.join(base_dir, "backend", ".venv", "Scripts", "pythonw.exe")
