@@ -1259,6 +1259,8 @@ export default function App() {
     );
   }
 
+  const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth < 768;
+
   return (
     <div className="flex flex-col md:flex-row h-screen w-screen overflow-hidden pb-16 md:pb-0">
       
@@ -1323,13 +1325,15 @@ export default function App() {
                       <span>Sync Calendar</span>
                     </button>
                     
-                    <button 
-                      onClick={() => { fetchPublicIp(); setShowMobileGuide(true); setShowSettings(false); }}
-                      className="w-full text-left px-3 py-2 rounded-lg text-xs font-medium bg-gray-900 hover:bg-gray-800 text-gray-200 transition-all flex items-center space-x-2"
-                    >
-                      <Clock className="h-3.5 w-3.5 text-indigo-400" />
-                      <span>Connect Mobile Phone</span>
-                    </button>
+                    {!isMobileDevice && (
+                      <button 
+                        onClick={() => { fetchPublicIp(); setShowMobileGuide(true); setShowSettings(false); }}
+                        className="w-full text-left px-3 py-2 rounded-lg text-xs font-medium bg-gray-900 hover:bg-gray-800 text-gray-200 transition-all flex items-center space-x-2"
+                      >
+                        <Clock className="h-3.5 w-3.5 text-indigo-400" />
+                        <span>Connect Mobile Phone</span>
+                      </button>
+                    )}
 
                     <div className="border-t border-gray-800/80 pt-2 mt-2">
                       <button
