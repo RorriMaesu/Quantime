@@ -2530,16 +2530,17 @@ export default function App() {
             <div className="space-y-2">
               <h2 className="text-xl font-extrabold text-white">Ecosystem Connected!</h2>
               <p className="text-xs text-gray-400 leading-relaxed">
-                Quantime is now installed on your device. The app icon has been placed on your home screen.
+                Quantime is now installed on your device.
               </p>
             </div>
 
-            <div className="w-full bg-gray-955 border border-gray-805/80 rounded-2xl p-4 space-y-2 text-left">
-              <h4 className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Next Steps</h4>
+            <div className="w-full bg-gray-955 border border-gray-805/80 rounded-2xl p-4 space-y-2.5 text-left">
+              <h4 className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">How to Launch</h4>
               <ol className="space-y-1.5 text-[11px] text-gray-300 list-decimal pl-4">
                 <li>Close this browser tab.</li>
-                <li>Go to your phone home screen.</li>
-                <li>Tap the <strong>Quantime</strong> app icon to launch the pairing panel.</li>
+                <li>Go to your phone **App Drawer** (swipe up on your home screen) to locate the new **Quantime** app icon.</li>
+                <li>Press and hold the icon, then drag it directly onto your Home Screen.</li>
+                <li>Tap the icon to start managing your schedule.</li>
               </ol>
             </div>
 
