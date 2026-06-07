@@ -9,7 +9,7 @@ DefaultDirName={userpf}\Quantime
 DefaultGroupName=Quantime
 OutputDir=dist
 OutputBaseFilename=QuantimeSetup
-Compression=lzma2/ultra
+Compression=lzma
 SolidCompression=yes
 PrivilegesRequired=admin
 
