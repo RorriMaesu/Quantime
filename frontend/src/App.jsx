@@ -2247,8 +2247,18 @@ export default function App() {
                 To access Quantime from your mobile phone and keep your calendar synchronized:
               </p>
               
-              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 font-mono select-all text-center text-indigo-400 font-bold">
-                https://quantime-scheduler-green.loca.lt
+              <div className="flex flex-col items-center justify-center p-4 bg-gray-900 border border-gray-800 rounded-2xl space-y-3">
+                <div className="p-2.5 bg-white rounded-xl shadow-glow transition-transform duration-300 hover:scale-105">
+                  <img 
+                    src="https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=https%3A%2F%2Fquantime-scheduler-green.loca.lt" 
+                    alt="Quantime Mobile Link QR Code"
+                    className="w-[140px] h-[140px] block"
+                  />
+                </div>
+                <div className="text-center">
+                  <p className="font-mono text-xs select-all text-indigo-400 font-bold">https://quantime-scheduler-green.loca.lt</p>
+                  <p className="text-[10px] text-gray-500 mt-1 font-medium">Scan with your phone camera to open instantly</p>
+                </div>
               </div>
               
               <div className="space-y-2">
