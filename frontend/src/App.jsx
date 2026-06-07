@@ -104,6 +104,7 @@ export default function App() {
   const [voiceStatus, setVoiceStatus] = useState("idle"); // 'idle', 'recording', 'thinking', 'speaking'
   const [activeVoiceText, setActiveVoiceText] = useState("");
   const [activeVoiceThoughts, setActiveVoiceThoughts] = useState("");
+  const [voiceError, setVoiceError] = useState("");
   const wsRef = useRef(null);
   const audioContextRef = useRef(null);
   const audioQueueRef = useRef([]);
@@ -123,6 +124,7 @@ export default function App() {
         setVoiceStatus("recording");
         setActiveVoiceText("");
         setActiveVoiceThoughts("");
+        setVoiceError("");
         startSpeechRecognition();
       };
       
@@ -175,6 +177,12 @@ export default function App() {
     recognition.interimResults = true;
     recognition.lang = 'en-US';
     
+    let lastErrorType = null;
+    
+    recognition.onstart = () => {
+      setVoiceError(""); // Clear any active connection errors
+    };
+    
     recognition.onresult = (event) => {
       if (isPlayingRef.current) {
         return;
@@ -206,14 +214,35 @@ export default function App() {
     
     recognition.onerror = (event) => {
       console.error("Speech recognition error:", event.error);
+      lastErrorType = event.error;
+      
+      if (event.error === "network") {
+        setVoiceError("Network error. Retrying connection...");
+      } else if (event.error === "no-speech") {
+        setVoiceError(""); // Transient timeout
+      }
     };
     
     recognition.onend = () => {
       // Restart recognition if voice is active and we are not speaking/thinking
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && !isPlayingRef.current && !activeAudioSourceRef.current) {
-        try {
-          recognition.start();
-        } catch (e) {}
+        let delay = 100;
+        if (lastErrorType === "network") {
+          delay = 3000; // Backoff to avoid rate limits
+          console.log("SpeechRecognition: Network error cooldown. Restarting in 3000ms...");
+        } else if (lastErrorType === "no-speech") {
+          delay = 500;
+        }
+        
+        lastErrorType = null;
+        
+        setTimeout(() => {
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && !isPlayingRef.current && !activeAudioSourceRef.current) {
+            try {
+              recognition.start();
+            } catch (e) {}
+          }
+        }, delay);
       }
     };
     
@@ -2864,7 +2893,15 @@ export default function App() {
                 <Mic className="h-8 w-8" />
               </div>
               <span className="text-xs text-gray-505 mt-3 font-semibold font-mono">
-                {voiceStatus === 'recording' ? 'Speak now... (Stop speaking to send)' : voiceStatus === 'thinking' ? 'Gemma 4 is thinking...' : 'Assistant is speaking (Tap mic to interrupt)...'}
+                {voiceError ? (
+                  <span className="text-red-400 animate-pulse">{voiceError}</span>
+                ) : voiceStatus === 'recording' ? (
+                  'Speak now... (Stop speaking to send)'
+                ) : voiceStatus === 'thinking' ? (
+                  'Gemma 4 is thinking...'
+                ) : (
+                  'Assistant is speaking (Tap mic to interrupt)...'
+                )}
               </span>
             </div>
 
