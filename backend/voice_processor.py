@@ -46,11 +46,15 @@ def synthesize_text_to_pcm(text: str, voice: str = 'af_heart') -> bytes:
         return audio_int16.tobytes()
 
     try:
+        import torch
         generator = pipeline(text, voice=voice, speed=1.0, split_pattern=r'\n+')
         audio_chunks = []
         for _, _, audio in generator:
             if audio is not None:
-                # Kokoro returns float32 numpy arrays. Convert to int16.
+                # Convert PyTorch Tensor to NumPy array if necessary
+                if isinstance(audio, torch.Tensor):
+                    audio = audio.cpu().numpy()
+                # Convert float32 to int16
                 audio_int16 = (audio * 32767).astype(np.int16)
                 audio_chunks.append(audio_int16.tobytes())
         return b"".join(audio_chunks)
