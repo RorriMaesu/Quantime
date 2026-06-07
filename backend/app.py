@@ -10,7 +10,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 import hashlib
 import base64
-from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -23,6 +23,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from backend.database import init_db, get_db_connection, circuit_breaker, FirestoreThrottlingException
 from backend.google_client import GoogleOAuthManager, GoogleCalendarSync, GmailParser
 from backend.ollama_agent import generate_agent_stream, modify_task_time, get_current_schedule
+from backend.voice_processor import pcm_to_wav, synthesize_text_to_pcm, SimpleSilenceDetector
 
 logger = logging.getLogger("quantime.gateway")
 logging.basicConfig(level=logging.INFO)
@@ -1154,6 +1155,125 @@ def handle_chat_message(prompt: str, background_tasks: BackgroundTasks):
         None
     )
     return {"status": "processing", "chat_id": chat_id}
+
+@app.websocket("/api/voice-chat")
+async def voice_chat_websocket(websocket: WebSocket):
+    await websocket.accept()
+    logger.info("Voice chat WebSocket connection established.")
+    
+    silence_detector = SimpleSilenceDetector(sample_rate=16000)
+    audio_buffer = bytearray()
+    interrupt_event = asyncio.Event()
+    assistant_speaking = False
+    
+    async def receive_loop():
+        nonlocal assistant_speaking, audio_buffer
+        try:
+            while True:
+                message = await websocket.receive()
+                
+                if "bytes" in message:
+                    data = message["bytes"]
+                    if not data:
+                        continue
+                    
+                    if assistant_speaking:
+                        # Direct VAD check: Check RMS energy of the chunk
+                        import numpy as np
+                        samples = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+                        if len(samples) > 0:
+                            rms = np.sqrt(np.mean(samples**2))
+                            if rms > 0.015:
+                                logger.info("User interrupted (barge-in detected via VAD). Setting interrupt event...")
+                                interrupt_event.set()
+                                continue
+                                
+                    audio_buffer.extend(data)
+                    
+                    if silence_detector.is_silence(data):
+                        logger.info("Silence detected. Triggering LLM voice turn...")
+                        asyncio.create_task(run_agent_turn())
+                        
+                elif "text" in message:
+                    try:
+                        msg_json = json.loads(message["text"])
+                        if msg_json.get("type") == "interrupt":
+                            logger.info("User interrupted (barge-in detected via message). Setting interrupt event...")
+                            interrupt_event.set()
+                    except Exception as je:
+                        logger.error(f"Error parsing voice control message: {je}")
+                        
+        except WebSocketDisconnect:
+            logger.info("Voice chat WebSocket disconnected.")
+        except Exception as e:
+            logger.error(f"Error in WebSocket receive loop: {e}")
+            
+    async def run_agent_turn():
+        nonlocal assistant_speaking, audio_buffer
+        if not audio_buffer:
+            return
+            
+        assistant_speaking = True
+        interrupt_event.clear()
+        
+        # Convert PCM to WAV
+        wav_bytes = pcm_to_wav(bytes(audio_buffer), 16000)
+        audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
+        audio_buffer.clear()
+        
+        history = get_recent_chat_history(limit=5)
+        await websocket.send_json({"type": "status", "status": "thinking"})
+        
+        text_buffer = ""
+        sentence_buffer = ""
+        
+        loop = asyncio.get_running_loop()
+        def run_stream():
+            return list(generate_agent_stream(prompt="", chat_history=history, audio_b64=audio_b64))
+            
+        try:
+            chunks = await loop.run_in_executor(None, run_stream)
+            
+            for channel, chunk in chunks:
+                if interrupt_event.is_set():
+                    logger.info("LLM generation interrupted by user barge-in.")
+                    await websocket.send_json({"type": "status", "status": "idle"})
+                    break
+                    
+                if channel == "text":
+                    text_buffer += chunk
+                    sentence_buffer += chunk
+                    await websocket.send_json({"type": "text", "text": chunk})
+                    
+                    if any(char in sentence_buffer for char in [".", "?", "!", "\n"]) and len(sentence_buffer.strip()) > 5:
+                        clean_sentence = sentence_buffer.strip()
+                        sentence_buffer = ""
+                        
+                        pcm_bytes = synthesize_text_to_pcm(clean_sentence)
+                        if pcm_bytes:
+                            if interrupt_event.is_set():
+                                break
+                            pcm_b64 = base64.b64encode(pcm_bytes).decode("utf-8")
+                            await websocket.send_json({"type": "audio", "audio": pcm_b64})
+                            
+            if sentence_buffer.strip() and not interrupt_event.is_set():
+                pcm_bytes = synthesize_text_to_pcm(sentence_buffer.strip())
+                if pcm_bytes:
+                    pcm_b64 = base64.b64encode(pcm_bytes).decode("utf-8")
+                    await websocket.send_json({"type": "audio", "audio": pcm_b64})
+                    
+            if not interrupt_event.is_set():
+                chat_id = f"voice_chat_{int(time.time() * 1000)}"
+                update_chat_record(f"user_{chat_id}", "user", "[Voice Input]", "", "done")
+                update_chat_record(chat_id, "agent", text_buffer, "", "done")
+                await websocket.send_json({"type": "status", "status": "idle"})
+                
+        except Exception as e:
+            logger.error(f"Error in LLM voice generation loop: {e}")
+        finally:
+            assistant_speaking = False
+            
+    await receive_loop()
 
 @app.delete("/api/chats")
 def delete_chats_endpoint():

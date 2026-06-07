@@ -575,7 +575,7 @@ Behavioral Guidelines & Rules:
 8. **Conversational & Proactive**: Give clear summaries of actions you took, highlight what tools you executed, explain why you restructured the schedule, and outline any proposed adjustments clearly to the user.
 """
 
-def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = []) -> Generator[Tuple[str, str], None, None]:
+def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], audio_b64: Optional[str] = None) -> Generator[Tuple[str, str], None, None]:
     """
     Communicates with local Ollama API, streaming output tokens.
     Appends '<|think|>' token to prompt to force deep-reasoning mode.
@@ -607,7 +607,10 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = []) 
     if not agent_prompt.strip().endswith("<|think|>"):
         agent_prompt += "\n<|think|>"
         
-    messages.append({"role": "user", "content": agent_prompt})
+    user_msg = {"role": "user", "content": agent_prompt}
+    if audio_b64:
+        user_msg["audios"] = [audio_b64]
+    messages.append(user_msg)
     
     def chat_loop(current_messages: List[Dict[str, Any]], depth: int = 0) -> Generator[Tuple[str, str], None, None]:
         if depth > 5:

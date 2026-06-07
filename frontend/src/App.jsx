@@ -20,7 +20,9 @@ import {
   AlertTriangle,
   Trash2,
   Eraser,
-  Settings
+  Settings,
+  Mic,
+  MicOff
 } from 'lucide-react';
 
 // Optional: Import Firebase SDK components if initialized client-side
@@ -96,6 +98,171 @@ export default function App() {
   const [stagedProposal, setStagedProposal] = useState(null); // { transaction_id, options: [...] }
   const [activeProposalOption, setActiveProposalOption] = useState(null); // { option_id, description, proposed_changes: [...] }
   const [proposalsMap, setProposalsMap] = useState({}); // tx_id -> proposal details
+
+  // Voice Chat S2S states and refs
+  const [isVoiceActive, setIsVoiceActive] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState("idle"); // 'idle', 'recording', 'thinking', 'speaking'
+  const wsRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const processorRef = useRef(null);
+  const micStreamRef = useRef(null);
+  const audioQueueRef = useRef([]);
+  const isPlayingRef = useRef(false);
+  const activeAudioSourceRef = useRef(null);
+
+  const startVoiceChat = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micStreamRef.current = stream;
+      
+      const wsUrl = `ws://${window.location.hostname}:8000/api/voice-chat`;
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+      
+      ws.onopen = () => {
+        console.log("Voice WebSocket connected.");
+        setIsVoiceActive(true);
+        setVoiceStatus("recording");
+      };
+      
+      ws.onmessage = async (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "status") {
+          setVoiceStatus(msg.status);
+        } else if (msg.type === "text") {
+          // Real-time voice transcripts can be optionally logged here
+        } else if (msg.type === "audio") {
+          const audioBytes = Uint8Array.from(atob(msg.audio), c => c.charCodeAt(0));
+          audioQueueRef.current.push(audioBytes);
+          playNextInQueue();
+        }
+      };
+      
+      ws.onclose = () => {
+        stopVoiceChat();
+      };
+      
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      audioContextRef.current = audioCtx;
+      
+      const source = audioCtx.createMediaStreamSource(stream);
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
+      
+      processor.onaudioprocess = (e) => {
+        const inputData = e.inputBuffer.getChannelData(0);
+        const pcmData = new Int16Array(inputData.length);
+        let rmsSum = 0;
+        for (let i = 0; i < inputData.length; i++) {
+          const s = Math.max(-1, Math.min(1, inputData[i]));
+          pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+          rmsSum += s * s;
+        }
+        const rms = Math.sqrt(rmsSum / inputData.length);
+        
+        // If user is speaking (rms > 0.015) while assistant is playing audio, interrupt locally
+        if (isPlayingRef.current && rms > 0.015) {
+          console.log("Local barge-in triggered: User speaking detected during playback. Halting assistant speech.");
+          stopAudioPlayback();
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "interrupt" }));
+          }
+        }
+        
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(pcmData.buffer);
+        }
+      };
+      
+      source.connect(processor);
+      processor.connect(audioCtx.destination);
+      
+    } catch (err) {
+      console.error("Failed to start voice chat:", err);
+      alert("Microphone permission denied or audio device not found.");
+      stopVoiceChat();
+    }
+  };
+
+  const playNextInQueue = async () => {
+    if (isPlayingRef.current || audioQueueRef.current.length === 0) return;
+    
+    isPlayingRef.current = true;
+    setVoiceStatus("speaking");
+    const pcmData = audioQueueRef.current.shift();
+    
+    try {
+      const audioCtx = audioContextRef.current || new (window.AudioContext || window.webkitAudioContext)();
+      const int16Array = new Int16Array(pcmData.buffer, pcmData.byteOffset, pcmData.byteLength / 2);
+      
+      const float32Array = new Float32Array(int16Array.length);
+      for (let i = 0; i < int16Array.length; i++) {
+        float32Array[i] = int16Array[i] / 32768.0;
+      }
+      
+      const audioBuffer = audioCtx.createBuffer(1, float32Array.length, 24000);
+      audioBuffer.getChannelData(0).set(float32Array);
+      
+      const source = audioCtx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioCtx.destination);
+      activeAudioSourceRef.current = source;
+      
+      source.onended = () => {
+        activeAudioSourceRef.current = null;
+        isPlayingRef.current = false;
+        if (audioQueueRef.current.length > 0) {
+          playNextInQueue();
+        } else {
+          setVoiceStatus("recording");
+        }
+      };
+      source.start(0);
+    } catch (err) {
+      console.error("Audio playback error:", err);
+      activeAudioSourceRef.current = null;
+      isPlayingRef.current = false;
+      playNextInQueue();
+    }
+  };
+
+  const stopAudioPlayback = () => {
+    if (activeAudioSourceRef.current) {
+      try {
+        activeAudioSourceRef.current.stop();
+      } catch (e) {}
+      activeAudioSourceRef.current = null;
+    }
+    audioQueueRef.current = [];
+    isPlayingRef.current = false;
+    setVoiceStatus("recording");
+  };
+
+  const stopVoiceChat = () => {
+    setIsVoiceActive(false);
+    setVoiceStatus("idle");
+    stopAudioPlayback();
+    
+    if (processorRef.current) {
+      try { processorRef.current.disconnect(); } catch(e){}
+      processorRef.current = null;
+    }
+    if (micStreamRef.current) {
+      try { micStreamRef.current.getTracks().forEach(track => track.stop()); } catch(e){}
+      micStreamRef.current = null;
+    }
+    if (wsRef.current) {
+      try { wsRef.current.close(); } catch(e){}
+      wsRef.current = null;
+    }
+  };
+
+  // Clean up voice objects on unmount
+  useEffect(() => {
+    return () => {
+      stopVoiceChat();
+    };
+  }, []);
 
   // Hook to fetch proposal options when a proposal tag is detected in chat history
   useEffect(() => {
@@ -2149,17 +2316,30 @@ export default function App() {
 
         {/* Input box */}
         <form onSubmit={handleSendMessage} className="relative mt-auto">
+          <button
+            type="button"
+            onClick={isVoiceActive ? stopVoiceChat : startVoiceChat}
+            className={`absolute left-2 top-2 p-1.5 rounded-lg flex items-center justify-center transition-all ${
+              isVoiceActive
+                ? 'bg-red-600 text-white animate-pulse shadow-lg shadow-red-950'
+                : 'bg-gray-850 hover:bg-gray-800 text-indigo-400 border border-gray-800'
+            }`}
+            title={isVoiceActive ? `Voice chat active: ${voiceStatus}. Click to stop.` : "Start Real-Time Voice Chat"}
+          >
+            {isVoiceActive ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+          </button>
+          
           <input 
             type="text" 
-            placeholder="Ask to reschedule, set dependencies, check Gmail..." 
+            placeholder={isVoiceActive ? `Voice Chatting (${voiceStatus})...` : "Ask to reschedule, set dependencies, check Gmail..."} 
             value={inputMessage}
             onChange={(e) => setInputMessage(e.target.value)}
-            disabled={isLoading}
-            className="w-full bg-gray-900 border border-gray-800 rounded-xl py-3 pl-4 pr-12 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-all shadow-inner"
+            disabled={isLoading || isVoiceActive}
+            className="w-full bg-gray-900 border border-gray-800 rounded-xl py-3 pl-12 pr-12 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-all shadow-inner"
           />
           <button 
             type="submit" 
-            disabled={isLoading || !inputMessage.trim()}
+            disabled={isLoading || isVoiceActive || !inputMessage.trim()}
             className="absolute right-2 top-2 p-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-800 text-white transition-all shadow-md shadow-indigo-950 flex items-center justify-center"
           >
             <Send className="h-4 w-4" />
