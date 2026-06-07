@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <defs>
+    <linearGradient id="glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#a855f7" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#6366f1" flood-opacity="0.3" />
+    </filter>
+  </defs>
+  <rect width="192" height="192" rx="40" fill="#0b0c10" />
+  <g filter="url(#shadow)">
+    <!-- Outer Ring -->
+    <circle cx="96" cy="96" r="64" fill="none" stroke="url(#glow)" stroke-width="6" stroke-dasharray="10 6" />
+    <!-- Clock Hands/Hourglass -->
+    <path d="M76 60 H116 L96 96 Z" fill="url(#glow)" opacity="0.8" />
+    <path d="M76 132 H116 L96 96 Z" fill="url(#glow)" />
+    <!-- Center Node -->
+    <circle cx="96" cy="96" r="6" fill="#ffffff" />
+  </g>
+</svg>

@@ -1,0 +1,26 @@
+# Databases and Chroma logs
+*.db
+*.db-journal
+*.db-wal
+*chroma_db/
+*temp_chroma_db/
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+
+# Dependency files & logs
+node_modules/
+*.log
+dist/
+build/
+
+# Credentials & Secrets
+backend/.env
+backend/credentials.json
+backend/firebase_key.json
+
+# Python pycache & compiled files
+__pycache__/
+*.pyc

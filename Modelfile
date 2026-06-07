@@ -1,0 +1,5 @@
+FROM gemma4
+PARAMETER num_ctx 8192
+PARAMETER temperature 1.0
+PARAMETER top_p 0.95
+SYSTEM "You are an advanced, agentic scheduling assistant. Always reason step-by-step."
