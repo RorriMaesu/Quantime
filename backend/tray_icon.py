@@ -95,7 +95,12 @@ def check_and_start_ollama():
         for filename in ["ollama app.exe", "Ollama.exe", "ollama.exe"]:
             ollama_path = os.path.join(local_appdata, "Programs", "Ollama", filename)
             if os.path.exists(ollama_path):
-                subprocess.Popen([ollama_path])
+                startupinfo = None
+                if os.name == 'nt':
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = 6  # SW_MINIMIZE
+                subprocess.Popen([ollama_path], startupinfo=startupinfo)
                 return
 
 # Add directory root to path
@@ -226,6 +231,32 @@ def on_exit(icon, item):
     kill_process_tree(tunnel_proc)
     sys.exit(0)
 
+def open_dashboard_when_ready():
+    # Wait for backend (8000) to start accepting connections
+    for _ in range(30):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            s.connect(('127.0.0.1', 8000))
+            s.close()
+            break
+        except Exception:
+            time.sleep(0.5)
+            
+    # Wait for frontend (5173) to start accepting connections
+    for _ in range(30):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            s.connect(('127.0.0.1', 5173))
+            s.close()
+            break
+        except Exception:
+            time.sleep(0.5)
+            
+    time.sleep(0.5)
+    webbrowser.open("http://localhost:5173")
+
 def main():
     lock_single_instance()
     start_services()
@@ -241,8 +272,8 @@ def main():
     # Create the tray icon
     icon = pystray.Icon("Quantime", create_image(), "Quantime Engine", menu)
     
-    # Open dashboard on start
-    threading.Thread(target=lambda: (time.sleep(2), webbrowser.open("http://localhost:5173"))).start()
+    # Open dashboard only when services are ready
+    threading.Thread(target=open_dashboard_when_ready, daemon=True).start()
     
     icon.run()
 
