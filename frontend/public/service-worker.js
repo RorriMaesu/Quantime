@@ -92,6 +92,7 @@ self.addEventListener('push', event => {
     pinned: true, // Keep notification pinned on lock-screen
     requireInteraction: !isSilent,
     silent: isSilent,
+    vibrate: isSilent ? [] : [200, 100, 200],
     data: { taskId: data.taskId },
     actions: isSilent ? [] : [
       { action: 'COMPLETE', title: 'Complete Task' },
