@@ -1362,6 +1362,8 @@ export default function App() {
                   </div>
                 );
               }
+
+              return elements;
             })()}
           </div>
         </section>
