@@ -35,10 +35,13 @@ def check_and_start_ollama():
 
     local_appdata = os.environ.get("LOCALAPPDATA")
     if local_appdata:
-        ollama_path = os.path.join(local_appdata, "Programs", "Ollama", "Ollama.exe")
-        if os.path.exists(ollama_path):
-            # Launch Ollama app; as a GUI process, it automatically collapses to the system tray
-            subprocess.Popen([ollama_path])
+        # Search for GUI app first (with space), then fall back to standard names
+        for filename in ["ollama app.exe", "Ollama.exe", "ollama.exe"]:
+            ollama_path = os.path.join(local_appdata, "Programs", "Ollama", filename)
+            if os.path.exists(ollama_path):
+                # Launch Ollama app; as a GUI process, it automatically collapses to the system tray
+                subprocess.Popen([ollama_path])
+                return
 
 # Add directory root to path
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
