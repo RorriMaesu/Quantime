@@ -172,9 +172,10 @@ export default function App() {
       e.preventDefault();
       setDeferredPrompt(e);
       
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth < 768;
       const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
       const dismissed = sessionStorage.getItem('pwa_prompt_dismissed');
-      if (!isStandalone && !dismissed) {
+      if (isMobile && !isStandalone && !dismissed) {
         setShowMobileInstallPrompt(true);
       }
     };
