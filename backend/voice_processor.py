@@ -1,4 +1,7 @@
 # backend/voice_processor.py
+import os
+os.environ["HF_HUB_OFFLINE"] = "1"
+
 import io
 import wave
 import logging
