@@ -7,10 +7,15 @@ import logging
 import urllib.request
 import json
 from typing import Dict, Any, List, Optional
+from datetime import datetime, timedelta
+import hashlib
+import base64
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from pywebpush import webpush, WebPushException
+from cryptography.hazmat.primitives.serialization import load_pem_public_key, Encoding, PublicFormat
 
 # Add workspace directory to path to ensure backend imports work
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -60,6 +65,7 @@ async def startup_event():
 
     import threading
     threading.Thread(target=preload_model, daemon=True).start()
+    threading.Thread(target=notification_poller_thread, daemon=True).start()
 
 # =====================================================================
 # Dual-Mode Firebase Initialization (With Local Mock Fallback)
@@ -372,6 +378,10 @@ def health_check():
 class ProfileSchema(BaseModel):
     user_id: str
     user_name: str
+    notifications_enabled: Optional[str] = 'true'
+    notification_lead_minutes: Optional[str] = '15'
+    notification_on_start: Optional[str] = 'true'
+    notification_dnd_focus: Optional[str] = 'true'
 
 @app.get("/api/profile")
 def get_user_profile():
@@ -388,11 +398,38 @@ def get_user_profile():
         google_row = cursor.fetchone()
         is_google_linked = google_row is not None and len(google_row["value"]) > 0
         
+        cursor.execute("SELECT value FROM user_profiles WHERE key = 'notifications_enabled'")
+        ne_row = cursor.fetchone()
+        cursor.execute("SELECT value FROM user_profiles WHERE key = 'notification_lead_minutes'")
+        nl_row = cursor.fetchone()
+        cursor.execute("SELECT value FROM user_profiles WHERE key = 'notification_on_start'")
+        ns_row = cursor.fetchone()
+        cursor.execute("SELECT value FROM user_profiles WHERE key = 'notification_dnd_focus'")
+        nd_row = cursor.fetchone()
+        
         u_id = id_row["value"] if id_row else os.environ.get("USER_ID", "user")
         u_name = name_row["value"] if name_row else os.environ.get("USER_NAME", "User")
-        return {"user_id": u_id, "user_name": u_name, "is_google_linked": is_google_linked}
+        
+        return {
+            "user_id": u_id,
+            "user_name": u_name,
+            "is_google_linked": is_google_linked,
+            "notifications_enabled": ne_row["value"] if ne_row else 'true',
+            "notification_lead_minutes": nl_row["value"] if nl_row else '15',
+            "notification_on_start": ns_row["value"] if ns_row else 'true',
+            "notification_dnd_focus": nd_row["value"] if nd_row else 'true'
+        }
     except Exception as e:
-        return {"user_id": "user", "user_name": "User", "is_google_linked": False, "error": str(e)}
+        return {
+            "user_id": "user",
+            "user_name": "User",
+            "is_google_linked": False,
+            "notifications_enabled": "true",
+            "notification_lead_minutes": "15",
+            "notification_on_start": "true",
+            "notification_dnd_focus": "true",
+            "error": str(e)
+        }
     finally:
         conn.close()
 
@@ -404,8 +441,24 @@ def update_user_profile(profile: ProfileSchema):
     try:
         cursor.execute("INSERT OR REPLACE INTO user_profiles (key, value) VALUES ('user_id', ?)", (profile.user_id,))
         cursor.execute("INSERT OR REPLACE INTO user_profiles (key, value) VALUES ('user_name', ?)", (profile.user_name,))
+        if profile.notifications_enabled is not None:
+            cursor.execute("INSERT OR REPLACE INTO user_profiles (key, value) VALUES ('notifications_enabled', ?)", (profile.notifications_enabled,))
+        if profile.notification_lead_minutes is not None:
+            cursor.execute("INSERT OR REPLACE INTO user_profiles (key, value) VALUES ('notification_lead_minutes', ?)", (profile.notification_lead_minutes,))
+        if profile.notification_on_start is not None:
+            cursor.execute("INSERT OR REPLACE INTO user_profiles (key, value) VALUES ('notification_on_start', ?)", (profile.notification_on_start,))
+        if profile.notification_dnd_focus is not None:
+            cursor.execute("INSERT OR REPLACE INTO user_profiles (key, value) VALUES ('notification_dnd_focus', ?)", (profile.notification_dnd_focus,))
         conn.commit()
-        return {"status": "success", "user_id": profile.user_id, "user_name": profile.user_name}
+        return {
+            "status": "success",
+            "user_id": profile.user_id,
+            "user_name": profile.user_name,
+            "notifications_enabled": profile.notifications_enabled,
+            "notification_lead_minutes": profile.notification_lead_minutes,
+            "notification_on_start": profile.notification_on_start,
+            "notification_dnd_focus": profile.notification_dnd_focus
+        }
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=400, detail=f"Database update failed: {e}")
@@ -1133,6 +1186,374 @@ def list_unread_emails():
     """Unread Gmail updates inspection endpoint."""
     emails = GmailParser.get_unread_updates()
     return {"unread_emails": emails}
+
+# =====================================================================
+# Notification Helper Functions & Endpoints
+# =====================================================================
+
+def get_or_create_vapid_keys():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM user_profiles WHERE key = 'vapid_private_key'")
+    priv_row = cursor.fetchone()
+    cursor.execute("SELECT value FROM user_profiles WHERE key = 'vapid_public_key'")
+    pub_row = cursor.fetchone()
+    
+    if priv_row and pub_row:
+        priv_pem = priv_row["value"].encode('utf-8')
+        pub_pem = pub_row["value"].encode('utf-8')
+        conn.close()
+        return priv_pem, pub_pem
+    else:
+        from py_vapid import Vapid
+        v = Vapid()
+        v.generate_keys()
+        priv_pem = v.private_pem()
+        pub_pem = v.public_pem()
+        cursor.execute("INSERT OR REPLACE INTO user_profiles (key, value) VALUES ('vapid_private_key', ?)", (priv_pem.decode('utf-8'),))
+        cursor.execute("INSERT OR REPLACE INTO user_profiles (key, value) VALUES ('vapid_public_key', ?)", (pub_pem.decode('utf-8'),))
+        conn.commit()
+        conn.close()
+        return priv_pem, pub_pem
+
+def get_vapid_public_key_b64(pub_pem: bytes) -> str:
+    pub_key = load_pem_public_key(pub_pem)
+    pub_bytes = pub_key.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+    return base64.urlsafe_b64encode(pub_bytes).decode('utf-8').rstrip('=')
+
+def get_user_profile_value(key: str, default: str) -> str:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT value FROM user_profiles WHERE key = ?", (key,))
+        row = cursor.fetchone()
+        if row:
+            return row["value"]
+    except Exception as e:
+        logger.error(f"Error reading user profile {key}: {e}")
+    finally:
+        conn.close()
+    return default
+
+def get_active_focus_task_id(now_dt) -> Optional[str]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT id, start_time, end_time, energy_level, status FROM tasks WHERE energy_level = 'crimson' AND status = 'pending'")
+        rows = cursor.fetchall()
+        for row in rows:
+            start_dt = datetime.fromisoformat(row["start_time"].replace('Z', '+00:00'))
+            end_dt = datetime.fromisoformat(row["end_time"].replace('Z', '+00:00'))
+            if start_dt <= now_dt < end_dt:
+                return row["id"]
+    except Exception as e:
+        logger.error(f"Error fetching active focus task: {e}")
+    finally:
+        conn.close()
+    return None
+
+def mark_notification_sent(task_id: str, start_time: str, alert_type: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT OR REPLACE INTO sent_notifications (task_id, start_time, alert_type, fired_at) VALUES (?, ?, ?, ?)",
+            (task_id, start_time, alert_type, time.time())
+        )
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Error writing to sent_notifications: {e}")
+    finally:
+        conn.close()
+
+def complete_task(task_id: str) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT id, title, start_time, end_time, status, source_event_id FROM tasks WHERE id = ?", (task_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False
+            
+        cursor.execute(
+            "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
+            ("completed", time.time(), task_id)
+        )
+        
+        if row["source_event_id"]:
+            try:
+                GoogleCalendarSync.patch_calendar_event(
+                    row["source_event_id"],
+                    row["start_time"],
+                    row["end_time"],
+                    f"[COMPLETED] {row['title']}"
+                )
+            except Exception as ge:
+                logger.error(f"Failed to patch calendar event on completion: {ge}")
+                
+        conn.commit()
+        
+        if db_firestore is not None:
+            try:
+                task_ref = db_firestore.collection("users").document(MOCK_USER_ID).collection("tasks").document(task_id)
+                task_ref.update({
+                    "status": "completed",
+                    "updated_at": time.time()
+                })
+            except Exception as fe:
+                logger.error(f"Failed to mirror task completion to Firestore: {fe}")
+                
+        return True
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error completing task {task_id}: {e}")
+        return False
+    finally:
+        conn.close()
+
+def snooze_task_by_10m(task_id: str) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT id, title, start_time, end_time, status, source_event_id FROM tasks WHERE id = ?", (task_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False
+        
+        start_str = row["start_time"]
+        end_str = row["end_time"]
+        
+        def add_10_mins(iso_str):
+            has_z = iso_str.endswith('Z')
+            clean_str = iso_str[:-1] if has_z else iso_str
+            dt = datetime.fromisoformat(clean_str)
+            dt_new = dt + timedelta(minutes=10)
+            return dt_new.isoformat() + ('Z' if has_z else '')
+            
+        new_start = add_10_mins(start_str)
+        new_end = add_10_mins(end_str)
+        
+        cursor.execute(
+            "UPDATE tasks SET start_time = ?, end_time = ?, updated_at = ? WHERE id = ?",
+            (new_start, new_end, time.time(), task_id)
+        )
+        
+        if row["source_event_id"]:
+            try:
+                GoogleCalendarSync.patch_calendar_event(
+                    row["source_event_id"],
+                    new_start,
+                    new_end,
+                    row["title"]
+                )
+            except Exception as ge:
+                logger.error(f"Failed to patch calendar event on snooze: {ge}")
+                
+        conn.commit()
+        
+        if db_firestore is not None:
+            try:
+                task_ref = db_firestore.collection("users").document(MOCK_USER_ID).collection("tasks").document(task_id)
+                task_ref.update({
+                    "start_time": new_start,
+                    "end_time": new_end,
+                    "updated_at": time.time()
+                })
+            except Exception as fe:
+                logger.error(f"Failed to mirror task snooze to Firestore: {fe}")
+                
+        return True
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error snoozing task {task_id}: {e}")
+        return False
+    finally:
+        conn.close()
+
+async def check_and_send_notifications():
+    try:
+        enabled = get_user_profile_value('notifications_enabled', 'true') == 'true'
+        if not enabled:
+            return
+            
+        lead_mins = int(get_user_profile_value('notification_lead_minutes', '15'))
+        on_start = get_user_profile_value('notification_on_start', 'true') == 'true'
+        dnd_focus = get_user_profile_value('notification_dnd_focus', 'true') == 'true'
+        
+        now_dt = datetime.now().astimezone()
+        active_focus_id = get_active_focus_task_id(now_dt) if dnd_focus else None
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, title, start_time, end_time, energy_level, status FROM tasks WHERE status = 'pending'")
+        tasks = [dict(r) for r in cursor.fetchall()]
+        
+        cursor.execute("SELECT task_id, start_time, alert_type FROM sent_notifications")
+        sent_set = {(r["task_id"], r["start_time"], r["alert_type"]) for r in cursor.fetchall()}
+        conn.close()
+        
+        priv_pem, _ = get_or_create_vapid_keys()
+        priv_key_str = priv_pem.decode('utf-8')
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT subscription_json FROM push_subscriptions")
+        subscriptions = [json.loads(r["subscription_json"]) for r in cursor.fetchall()]
+        conn.close()
+        
+        if not subscriptions:
+            return
+            
+        for T in tasks:
+            try:
+                start_dt = datetime.fromisoformat(T["start_time"].replace('Z', '+00:00'))
+            except Exception:
+                continue
+                
+            diff_seconds = (start_dt - now_dt).total_seconds()
+            alert_to_send = None
+            
+            if 0 < diff_seconds <= (lead_mins * 60):
+                if (T["id"], T["start_time"], "lead") not in sent_set:
+                    alert_to_send = "lead"
+            elif -300 <= diff_seconds <= 10:
+                if on_start and (T["id"], T["start_time"], "start") not in sent_set:
+                    alert_to_send = "start"
+                    
+            if alert_to_send:
+                is_silent = False
+                if dnd_focus and active_focus_id:
+                    if T["id"] != active_focus_id and T["energy_level"] != "crimson":
+                        is_silent = True
+                        
+                title = f"Upcoming: {T['title']}" if alert_to_send == "lead" else f"Starting now: {T['title']}"
+                body = f"Starts in {lead_mins} minutes." if alert_to_send == "lead" else "It's time to begin!"
+                
+                payload = json.dumps({
+                    "title": title,
+                    "body": body,
+                    "taskId": T["id"],
+                    "alertType": alert_to_send,
+                    "silent": is_silent
+                })
+                
+                for sub_info in subscriptions:
+                    try:
+                        webpush(
+                            subscription_info=sub_info,
+                            data=payload,
+                            vapid_private_key=priv_key_str,
+                            vapid_claims={"sub": "mailto:admin@quantime.app"}
+                        )
+                    except WebPushException as e:
+                        logger.warning(f"Failed to deliver webpush to subscription: {e}")
+                        
+                mark_notification_sent(T["id"], T["start_time"], alert_to_send)
+    except Exception as e:
+        logger.error(f"Error checking and sending notifications: {e}")
+
+def notification_poller_thread():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    async def poller_loop():
+        logger.info("Notification background poller loop started.")
+        while True:
+            try:
+                await check_and_send_notifications()
+            except Exception as e:
+                logger.error(f"Error in check_and_send_notifications: {e}")
+            await asyncio.sleep(60)
+            
+    loop.run_until_complete(poller_loop())
+
+@app.get("/api/notifications/vapid-public-key")
+def get_vapid_public_key():
+    _, pub_pem = get_or_create_vapid_keys()
+    pub_key_b64 = get_vapid_public_key_b64(pub_pem)
+    return {"publicKey": pub_key_b64}
+
+class SubscriptionPayload(BaseModel):
+    subscription: Dict[str, Any]
+
+@app.post("/api/notifications/subscribe")
+def subscribe_notifications(payload: SubscriptionPayload):
+    sub = payload.subscription
+    endpoint = sub.get("endpoint")
+    if not endpoint:
+        raise HTTPException(status_code=400, detail="Invalid subscription data")
+    
+    sub_id = hashlib.sha256(endpoint.encode('utf-8')).hexdigest()
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT OR REPLACE INTO push_subscriptions (id, subscription_json, created_at) VALUES (?, ?, ?)",
+        (sub_id, json.dumps(sub), time.time())
+    )
+    conn.commit()
+    conn.close()
+    return {"status": "success", "id": sub_id}
+
+@app.post("/api/notifications/test")
+def test_notifications():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT subscription_json FROM push_subscriptions")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    if not rows:
+        raise HTTPException(status_code=400, detail="No push subscriptions registered. Please subscribe first.")
+        
+    priv_pem, _ = get_or_create_vapid_keys()
+    priv_key_str = priv_pem.decode('utf-8')
+    
+    payload_data = json.dumps({
+        "title": "Quantime Test Alert",
+        "body": "Your notification configuration is working correctly!",
+        "taskId": "test-id",
+        "alertType": "test",
+        "silent": False
+    })
+    
+    success_count = 0
+    fail_count = 0
+    
+    for row in rows:
+        sub_info = json.loads(row["subscription_json"])
+        try:
+            webpush(
+                subscription_info=sub_info,
+                data=payload_data,
+                vapid_private_key=priv_key_str,
+                vapid_claims={"sub": "mailto:admin@quantime.app"}
+            )
+            success_count += 1
+        except WebPushException as e:
+            logger.warning(f"Failed to send test push: {e}")
+            fail_count += 1
+            
+    return {"status": "success", "sent": success_count, "failed": fail_count}
+
+class ActionPayload(BaseModel):
+    taskId: str
+    action: str
+
+@app.post("/api/notifications/action")
+def handle_notification_action(payload: ActionPayload):
+    if payload.action == "complete":
+        success = complete_task(payload.taskId)
+        if not success:
+            raise HTTPException(status_code=400, detail="Failed to complete task")
+        return {"status": "success", "message": f"Task {payload.taskId} completed."}
+    elif payload.action == "snooze":
+        success = snooze_task_by_10m(payload.taskId)
+        if not success:
+            raise HTTPException(status_code=400, detail="Failed to snooze task")
+        return {"status": "success", "message": f"Task {payload.taskId} snoozed by 10 minutes."}
+    else:
+        raise HTTPException(status_code=400, detail="Invalid action type")
 
 if __name__ == "__main__":
     import uvicorn

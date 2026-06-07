@@ -155,6 +155,26 @@ def init_db(db_path: str = DB_FILE) -> None:
     )
     """)
     
+    # 9. Push Subscriptions Staging Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id TEXT PRIMARY KEY,
+        subscription_json TEXT NOT NULL,
+        created_at REAL NOT NULL
+    )
+    """)
+
+    # 10. Sent Notifications Audit Log Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS sent_notifications (
+        task_id TEXT NOT NULL,
+        start_time TEXT NOT NULL,
+        alert_type TEXT NOT NULL,
+        fired_at REAL NOT NULL,
+        PRIMARY KEY (task_id, start_time, alert_type)
+    )
+    """)
+    
     # Seed default circadian peak hours if empty
     cursor.execute("SELECT COUNT(*) FROM circadian_profiles")
     if cursor.fetchone()[0] == 0:
@@ -162,11 +182,17 @@ def init_db(db_path: str = DB_FILE) -> None:
         cursor.execute("INSERT INTO circadian_profiles (key, start_hour, end_hour, efficiency_type) VALUES ('evening_peak', 15, 18, 'peak')")
         cursor.execute("INSERT INTO circadian_profiles (key, start_hour, end_hour, efficiency_type) VALUES ('afternoon_slump', 13, 15, 'downtime')")
         
-    # 9. Seed Default Profiles (if empty)
+    # 11. Seed Default Profiles (if empty)
     cursor.execute("SELECT COUNT(*) FROM user_profiles WHERE key = 'user_id'")
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT OR IGNORE INTO user_profiles (key, value) VALUES ('user_id', 'user')")
         cursor.execute("INSERT OR IGNORE INTO user_profiles (key, value) VALUES ('user_name', 'User')")
+        
+    # Seed default reminder preferences if missing
+    cursor.execute("INSERT OR IGNORE INTO user_profiles (key, value) VALUES ('notifications_enabled', 'true')")
+    cursor.execute("INSERT OR IGNORE INTO user_profiles (key, value) VALUES ('notification_lead_minutes', '15')")
+    cursor.execute("INSERT OR IGNORE INTO user_profiles (key, value) VALUES ('notification_on_start', 'true')")
+    cursor.execute("INSERT OR IGNORE INTO user_profiles (key, value) VALUES ('notification_dnd_focus', 'true')")
         
     conn.commit()
     conn.close()

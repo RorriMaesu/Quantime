@@ -50,6 +50,12 @@ try {
 export default function App() {
   const [userId, setUserId] = useState("user");
   const [userName, setUserName] = useState("User");
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [notificationLeadMinutes, setNotificationLeadMinutes] = useState(15);
+  const [notificationOnStart, setNotificationOnStart] = useState(true);
+  const [notificationDndFocus, setNotificationDndFocus] = useState(true);
+  const [showNotificationSettings, setShowNotificationSettings] = useState(false);
+  const [isSubscribingPush, setIsSubscribingPush] = useState(false);
   const [tasks, setTasks] = useState([]);
   const [chats, setChats] = useState([
     {
@@ -320,6 +326,10 @@ export default function App() {
           setUserId(data.user_id);
           setUserName(data.user_name);
           setIsGoogleLinked(!!data.is_google_linked);
+          setNotificationsEnabled(data.notifications_enabled === 'true');
+          setNotificationLeadMinutes(parseInt(data.notification_lead_minutes) || 15);
+          setNotificationOnStart(data.notification_on_start === 'true');
+          setNotificationDndFocus(data.notification_dnd_focus === 'true');
           setChats(prev => prev.map(c => {
             if (c.id === 'welcome') {
               return {
@@ -391,6 +401,134 @@ export default function App() {
       alert("Failed to initiate Google OAuth flow. Please ensure the Quantime background engine is running (check your system tray / hidden icons in the taskbar).");
     }
   };
+
+  const saveNotificationSettings = async (enabled, leadMins, onStart, dndFocus) => {
+    try {
+      await fetch(`/api/profile`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          user_name: userName,
+          notifications_enabled: enabled ? 'true' : 'false',
+          notification_lead_minutes: String(leadMins),
+          notification_on_start: onStart ? 'true' : 'false',
+          notification_dnd_focus: dndFocus ? 'true' : 'false'
+        })
+      });
+    } catch (e) {
+      console.error("Failed to save notification settings", e);
+    }
+  };
+
+  const subscribeToPushNotifications = async () => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      console.warn("Web Push is not supported by this browser.");
+      return;
+    }
+    
+    setIsSubscribingPush(true);
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        throw new Error('Notification permission denied');
+      }
+      
+      const reg = await navigator.serviceWorker.ready;
+      
+      const keyResp = await fetch(`/api/notifications/vapid-public-key`);
+      if (!keyResp.ok) throw new Error("Failed to get public VAPID key");
+      const { publicKey } = await keyResp.json();
+      
+      const padding = '='.repeat((4 - publicKey.length % 4) % 4);
+      const base64 = (publicKey + padding).replace(/\-/g, '+').replace(/_/g, '/');
+      const rawData = window.atob(base64);
+      const outputArray = new Uint8Array(rawData.length);
+      for (let i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i);
+      }
+      
+      const subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: outputArray
+      });
+      
+      await fetch(`/api/notifications/subscribe`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ subscription })
+      });
+      
+      console.log("Successfully subscribed to Push Notifications!");
+    } catch (err) {
+      console.error("Failed to subscribe to push notifications", err);
+    } finally {
+      setIsSubscribingPush(false);
+    }
+  };
+
+  const localTimersRef = useRef([]);
+
+  useEffect(() => {
+    localTimersRef.current.forEach(timerId => clearTimeout(timerId));
+    localTimersRef.current = [];
+
+    if (!notificationsEnabled) return;
+    if (Notification.permission !== 'granted') return;
+
+    const now = new Date();
+    tasks.forEach(task => {
+      if (task.status === 'completed') return;
+
+      const startTime = new Date(task.start_time);
+      if (isNaN(startTime.getTime())) return;
+
+      const leadTimeMs = startTime.getTime() - now.getTime() - (notificationLeadMinutes * 60 * 1000);
+      if (leadTimeMs > 0) {
+        const timerId = setTimeout(() => {
+          if (navigator.onLine === false) {
+            new Notification(`Upcoming: ${task.title}`, {
+              body: `Starts in ${notificationLeadMinutes} minutes.`,
+              icon: '/logo192.png',
+              tag: `lead-${task.id}`
+            });
+          }
+        }, leadTimeMs);
+        localTimersRef.current.push(timerId);
+      }
+
+      if (notificationOnStart) {
+        const startTimeMs = startTime.getTime() - now.getTime();
+        if (startTimeMs > 0) {
+          const timerId = setTimeout(() => {
+            if (navigator.onLine === false) {
+              new Notification(`Starting now: ${task.title}`, {
+                body: "It's time to begin!",
+                icon: '/logo192.png',
+                tag: `start-${task.id}`
+              });
+            }
+          }, startTimeMs);
+          localTimersRef.current.push(timerId);
+        }
+      }
+    });
+
+    return () => {
+      localTimersRef.current.forEach(timerId => clearTimeout(timerId));
+    };
+  }, [tasks, notificationsEnabled, notificationLeadMinutes, notificationOnStart]);
+
+  useEffect(() => {
+    if (notificationsEnabled && 'Notification' in window && Notification.permission === 'granted') {
+      subscribeToPushNotifications();
+    }
+  }, [notificationsEnabled]);
+
 
   const triggerSync = async () => {
     setIsSyncing(true);
@@ -1125,6 +1263,107 @@ export default function App() {
                       <Clock className="h-3.5 w-3.5 text-indigo-400" />
                       <span>Connect Mobile Phone</span>
                     </button>
+
+                    <div className="border-t border-gray-800/80 pt-2 mt-2">
+                      <button
+                        onClick={() => setShowNotificationSettings(!showNotificationSettings)}
+                        className="w-full text-left px-2 py-1 text-[10px] font-semibold text-gray-500 hover:text-gray-400 transition-all uppercase tracking-wider flex justify-between items-center focus:outline-none"
+                      >
+                        <span>Alerts & Notifications</span>
+                        <ChevronDown className={`h-3 w-3 transform transition-transform ${showNotificationSettings ? 'rotate-180' : ''}`} />
+                      </button>
+                      
+                      {showNotificationSettings && (
+                        <div className="mt-2 space-y-2.5 pl-1 pr-1 text-gray-300 animate-slide">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-medium">Enable Notifications</span>
+                            <input 
+                              type="checkbox" 
+                              checked={notificationsEnabled} 
+                              onChange={async (e) => {
+                                const val = e.target.checked;
+                                setNotificationsEnabled(val);
+                                await saveNotificationSettings(val, notificationLeadMinutes, notificationOnStart, notificationDndFocus);
+                                if (val) {
+                                  subscribeToPushNotifications();
+                                }
+                              }} 
+                              className="accent-indigo-550 h-3.5 w-3.5 rounded border-gray-800 bg-gray-900"
+                            />
+                          </div>
+
+                          {notificationsEnabled && (
+                            <>
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider block">Lead Time Reminder</label>
+                                <select 
+                                  value={notificationLeadMinutes} 
+                                  onChange={async (e) => {
+                                    const val = parseInt(e.target.value);
+                                    setNotificationLeadMinutes(val);
+                                    await saveNotificationSettings(notificationsEnabled, val, notificationOnStart, notificationDndFocus);
+                                  }}
+                                  className="w-full bg-gray-900 border border-gray-800 text-xs rounded-lg px-2 py-1 focus:outline-none focus:border-indigo-550 text-gray-200"
+                                >
+                                  <option value={0}>None (Disabled)</option>
+                                  <option value={5}>5 Minutes</option>
+                                  <option value={15}>15 Minutes</option>
+                                  <option value={30}>30 Minutes</option>
+                                  <option value={60}>1 Hour</option>
+                                </select>
+                              </div>
+
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-medium">Alert on Start Time</span>
+                                <input 
+                                  type="checkbox" 
+                                  checked={notificationOnStart} 
+                                  onChange={async (e) => {
+                                    const val = e.target.checked;
+                                    setNotificationOnStart(val);
+                                    await saveNotificationSettings(notificationsEnabled, notificationLeadMinutes, val, notificationDndFocus);
+                                  }} 
+                                  className="accent-indigo-550 h-3.5 w-3.5 rounded border-gray-800 bg-gray-900"
+                                />
+                              </div>
+
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-medium">DND in Focus blocks</span>
+                                <input 
+                                  type="checkbox" 
+                                  checked={notificationDndFocus} 
+                                  onChange={async (e) => {
+                                    const val = e.target.checked;
+                                    setNotificationDndFocus(val);
+                                    await saveNotificationSettings(notificationsEnabled, notificationLeadMinutes, notificationOnStart, val);
+                                  }} 
+                                  className="accent-indigo-550 h-3.5 w-3.5 rounded border-gray-800 bg-gray-900"
+                                />
+                              </div>
+
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    const res = await fetch('/api/notifications/test', { method: 'POST' });
+                                    if (res.ok) {
+                                      alert("Test notification dispatched!");
+                                    } else {
+                                      const err = await res.json();
+                                      alert("Failed: " + (err.detail || "Unknown error"));
+                                    }
+                                  } catch (err) {
+                                    alert("Error: " + err.message);
+                                  }
+                                }}
+                                className="w-full py-1 text-center bg-indigo-950/45 text-indigo-300 border border-indigo-900/40 rounded-lg text-[10px] font-bold hover:bg-indigo-900/35 transition-all"
+                              >
+                                Test Push Notification
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
 
                     <div className="border-t border-gray-800/80 pt-2 mt-2">
                       <button

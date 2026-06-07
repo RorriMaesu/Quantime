@@ -73,7 +73,7 @@ self.addEventListener('fetch', event => {
 
 // Listen to Push Notifications (FCM / Cloud Sync)
 self.addEventListener('push', event => {
-  let data = { title: 'Quantime Active Task', body: 'No current active task.', taskId: null };
+  let data = { title: 'Quantime Active Task', body: 'No current active task.', taskId: null, silent: false };
   if (event.data) {
     try {
       data = event.data.json();
@@ -82,17 +82,20 @@ self.addEventListener('push', event => {
     }
   }
 
+  const isSilent = data.silent === true || data.silent === 'true';
+
   const options = {
     body: data.body,
     icon: '/logo192.png',
     badge: '/logo192.png',
     tag: 'active-task',
     pinned: true, // Keep notification pinned on lock-screen
-    requireInteraction: true,
+    requireInteraction: !isSilent,
+    silent: isSilent,
     data: { taskId: data.taskId },
-    actions: [
-      { action: 'COMPLETE', title: 'Complete Task', icon: '/icons/complete.png' },
-      { action: 'SNOOZE_15', title: 'Snooze 15 Min', icon: '/icons/snooze.png' }
+    actions: isSilent ? [] : [
+      { action: 'COMPLETE', title: 'Complete Task' },
+      { action: 'SNOOZE_15', title: 'Snooze 10 Min' }
     ]
   };
 
@@ -116,36 +119,58 @@ self.addEventListener('notificationclick', event => {
 
   // Handle action buttons
   if (action === 'COMPLETE' || action === 'SNOOZE_15') {
+    const actionValue = action === 'COMPLETE' ? 'complete' : 'snooze';
     const statusValue = action === 'COMPLETE' ? 'completed' : 'snoozed';
     
-    // Firestore REST API Endpoint with appended API Key for firewall traversal
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/users/${USER_ID}/tasks/${taskId}?updateMask.fieldPaths=status&updateMask.fieldPaths=updated_at&key=${FIREBASE_API_KEY}`;
-    
-    const payload = {
-      fields: {
-        status: { stringValue: statusValue },
-        updated_at: { doubleValue: Date.now() / 1000 }
-      }
+    // Call our FastAPI notification action endpoint first
+    const gatewayUrl = '/api/notifications/action';
+    const gatewayPayload = {
+      taskId: taskId,
+      action: actionValue
     };
 
-    console.log(`PWA Service Worker: Dispatching Firestore patch for Task ${taskId} -> ${statusValue}`);
+    console.log(`PWA Service Worker: Dispatching Gateway action for Task ${taskId} -> ${actionValue}`);
     
     event.waitUntil(
-      fetch(url, {
-        method: 'PATCH',
+      fetch(gatewayUrl, {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(gatewayPayload)
       })
       .then(resp => {
         if (!resp.ok) {
-          throw new Error(`Firestore REST API returned status: ${resp.status}`);
+          throw new Error(`Gateway API action returned status: ${resp.status}`);
         }
-        console.log(`Firestore status mutation success for Task ${taskId}`);
+        console.log(`Gateway action '${actionValue}' success for Task ${taskId}`);
       })
       .catch(err => {
-        console.error("Direct Firestore write failed in service worker. Falling back to local offline queue.", err);
+        console.error("Gateway action failed, falling back to direct Firestore patch.", err);
+        
+        // Firestore REST API Endpoint with appended API Key for firewall traversal
+        const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/users/${USER_ID}/tasks/${taskId}?updateMask.fieldPaths=status&updateMask.fieldPaths=updated_at&key=${FIREBASE_API_KEY}`;
+        
+        const payload = {
+          fields: {
+            status: { stringValue: statusValue },
+            updated_at: { doubleValue: Date.now() / 1000 }
+          }
+        };
+
+        return fetch(url, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        })
+        .then(resp => {
+          if (!resp.ok) {
+            throw new Error(`Firestore REST API returned status: ${resp.status}`);
+          }
+          console.log(`Firestore status mutation success for Task ${taskId}`);
+        });
       })
     );
   } else {
