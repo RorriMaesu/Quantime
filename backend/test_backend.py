@@ -172,5 +172,81 @@ class TestQuantimeBackend(unittest.TestCase):
         finally:
             urllib.request.urlopen = original_urlopen
 
+    def test_agent_recursive_tool_calls(self):
+        """Verify the agent recursive tool loop handles sequential tool execution."""
+        import io
+        import urllib.request
+        
+        # Turn 1: Respond with a tool call to 'get_current_schedule'
+        turn1_response = [
+            json.dumps({
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "get_current_schedule",
+                            "arguments": {"start_date": "2026-06-07T00:00:00Z", "end_date": "2026-06-07T23:59:59Z"}
+                        }
+                    }]
+                }
+            })
+        ]
+        
+        # Turn 2: After tool execution, respond with text completion
+        turn2_response = [
+            json.dumps({
+                "message": {
+                    "role": "assistant",
+                    "content": "Schedule is clear. Scheduled successfully."
+                }
+            })
+        ]
+        
+        request_count = 0
+        
+        class MockHttpResponse:
+            def __init__(self, data_list):
+                self.stream = io.BytesIO("\n".join(data_list).encode("utf-8"))
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                pass
+            def __iter__(self):
+                return self.stream.__iter__()
+            def read(self):
+                return self.stream.read()
+                
+        def mock_urlopen(req, *args, **kwargs):
+            nonlocal request_count
+            request_count += 1
+            if request_count == 1:
+                return MockHttpResponse(turn1_response)
+            else:
+                return MockHttpResponse(turn2_response)
+                
+        original_urlopen = urllib.request.urlopen
+        urllib.request.urlopen = mock_urlopen
+        
+        try:
+            stream = generate_agent_stream("schedule a block for today at 2")
+            chunks = list(stream)
+            
+            self.assertEqual(request_count, 2)
+            
+            has_tool_trigger = any("[Agent Triggered Tool: get_current_schedule" in text for channel, text in chunks)
+            has_execution_success = any("[Tool Execution Success]" in text for channel, text in chunks)
+            has_final_text = any("Scheduled successfully" in text for channel, text in chunks)
+            
+            self.assertTrue(has_tool_trigger)
+            self.assertTrue(has_execution_success)
+            self.assertTrue(has_final_text)
+            print("[OK] Agent recursive tool-calling loop verified successfully.")
+            
+        finally:
+            urllib.request.urlopen = original_urlopen
+ 
 if __name__ == "__main__":
     unittest.main()

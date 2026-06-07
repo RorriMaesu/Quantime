@@ -494,7 +494,7 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = []) 
     """
     Communicates with local Ollama API, streaming output tokens.
     Appends '<|think|>' token to prompt to force deep-reasoning mode.
-    Splits `<|channel>thought\n` block tokens to yield thoughts stream and response stream.
+    Correctly supports sequential, recursive multi-turn tool calling up to max_depth of 5.
     """
     current_time_str = time.strftime("%A, %B %d, %Y, %I:%M %p %Z")
     dynamic_system_prompt = SYSTEM_PROMPT + f"\n\nCURRENT DATE-TIME CONTEXT:\n- Today's date and time: {current_time_str}\n- Ensure all new tasks created use the correct year, month, and day matching the current context unless a future date is explicitly requested.\n"
@@ -510,34 +510,75 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = []) 
         
     messages.append({"role": "user", "content": agent_prompt})
     
-    payload = {
-        "model": MODEL_NAME,
-        "messages": messages,
-        "tools": TOOL_SCHEMAS,
-        "stream": True,
-        "keep_alive": -1
-    }
-    
-    try:
-        req = urllib.request.Request(
-            OLLAMA_CHAT_URL,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        
-        with urllib.request.urlopen(req) as resp:
-            in_thought_block = False
+    def chat_loop(current_messages: List[Dict[str, Any]], depth: int = 0) -> Generator[Tuple[str, str], None, None]:
+        if depth > 5:
+            yield ("thought", f"\n[System: Max tool recursion depth 5 exceeded. Stopping.]\n")
+            return
             
-            for line in resp:
-                if not line:
-                    continue
-                chunk = json.loads(line.decode("utf-8"))
-                message = chunk.get("message", {})
+        payload = {
+            "model": MODEL_NAME,
+            "messages": current_messages,
+            "tools": TOOL_SCHEMAS,
+            "stream": True,
+            "keep_alive": -1
+        }
+        
+        try:
+            req = urllib.request.Request(
+                OLLAMA_CHAT_URL,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            
+            with urllib.request.urlopen(req) as resp:
+                in_thought_block = False
+                assistant_message = None
+                
+                for line in resp:
+                    if not line:
+                        continue
+                    chunk = json.loads(line.decode("utf-8"))
+                    message = chunk.get("message", {})
+                    
+                    if message:
+                        if assistant_message is None:
+                            assistant_message = {
+                                "role": "assistant",
+                                "content": message.get("content", ""),
+                                "tool_calls": message.get("tool_calls", [])
+                            }
+                        else:
+                            if "content" in message and message["content"]:
+                                assistant_message["content"] += message["content"]
+                            if "tool_calls" in message and message["tool_calls"]:
+                                if "tool_calls" not in assistant_message or not assistant_message["tool_calls"]:
+                                    assistant_message["tool_calls"] = []
+                                assistant_message["tool_calls"].extend(message["tool_calls"])
+                    
+                    content = message.get("content", "")
+                    if content:
+                        if "<|channel>thought" in content:
+                            in_thought_block = True
+                            content = content.replace("<|channel>thought", "")
+                            
+                        if in_thought_block:
+                            if "<|channel>" in content:
+                                parts = content.split("<|channel>")
+                                yield ("thought", parts[0])
+                                in_thought_block = False
+                                if len(parts) > 1:
+                                    yield ("text", parts[1].replace("text\n", ""))
+                            else:
+                                yield ("thought", content)
+                        else:
+                            yield ("text", content)
                 
                 # Check for Tool Call requests
-                if "tool_calls" in message and message["tool_calls"]:
-                    for tool_call in message["tool_calls"]:
+                if assistant_message and assistant_message.get("tool_calls"):
+                    current_messages.append(assistant_message)
+                    
+                    for tool_call in assistant_message["tool_calls"]:
                         func_name = tool_call["function"]["name"]
                         func_args = tool_call["function"]["arguments"]
                         
@@ -551,78 +592,28 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = []) 
                             result = {"status": "error", "message": str(err)}
                             yield ("thought", f"[Tool Execution Error: {str(err)}]\n")
                             
-                        # Build follow-up payload
-                        messages.append(message)
-                        messages.append({
+                        current_messages.append({
                             "role": "tool",
                             "name": func_name,
                             "content": json.dumps(result)
                         })
                         
-                    # Recurse call to Ollama after adding tool results to context
-                    payload["messages"] = messages
-                    recurse_req = urllib.request.Request(
-                        OLLAMA_CHAT_URL,
-                        data=json.dumps(payload).encode("utf-8"),
-                        headers={"Content-Type": "application/json"},
-                        method="POST"
-                    )
+                    yield from chat_loop(current_messages, depth + 1)
                     
-                    with urllib.request.urlopen(recurse_req) as r_resp:
-                        for r_line in r_resp:
-                            if not r_line:
-                                continue
-                            r_chunk = json.loads(r_line.decode("utf-8"))
-                            r_content = r_chunk.get("message", {}).get("content", "")
-                            
-                            # Stream parsing
-                            if "<|channel>thought" in r_content:
-                                in_thought_block = True
-                                r_content = r_content.replace("<|channel>thought", "")
-                                
-                            if in_thought_block:
-                                if "<|channel>" in r_content:
-                                    parts = r_content.split("<|channel>")
-                                    yield ("thought", parts[0])
-                                    in_thought_block = False
-                                    if len(parts) > 1:
-                                        yield ("text", parts[1].replace("text\n", ""))
-                                else:
-                                    yield ("thought", r_content)
-                            else:
-                                yield ("text", r_content)
-                    return # Exit recursion loop
-                    
-                content = message.get("content", "")
+        except Exception as e:
+            logger.error(f"Error in Ollama loop request: {e}")
+            if depth == 0:
+                yield ("thought", "[Ollama connection inactive. Loading offline mock scheduler agent...]\n")
+                time.sleep(1.0)
+                yield ("thought", "Syncing memory buffers...\n")
+                time.sleep(0.5)
                 
-                # Check for channel markers
-                if "<|channel>thought" in content:
-                    in_thought_block = True
-                    content = content.replace("<|channel>thought", "")
-                    
-                if in_thought_block:
-                    if "<|channel>" in content:
-                        parts = content.split("<|channel>")
-                        yield ("thought", parts[0])
-                        in_thought_block = False
-                        if len(parts) > 1:
-                            yield ("text", parts[1].replace("text\n", ""))
-                    else:
-                        yield ("thought", content)
+                q_lower = prompt.lower()
+                if "reschedule" in q_lower or "move" in q_lower:
+                    yield ("text", "I've checked the local database. You have no conflicting hard constraints in that slot. Rescheduled successfully.")
                 else:
-                    yield ("text", content)
-                    
-    except Exception as e:
-        logger.error(f"Error in Ollama loop request: {e}")
-        # Graceful fallback mock execution
-        yield ("thought", "[Ollama connection inactive. Loading offline mock scheduler agent...]\n")
-        time.sleep(1.0)
-        yield ("thought", "Syncing memory buffers...\n")
-        time.sleep(0.5)
-        
-        # Determine fallback response based on keywords
-        q_lower = prompt.lower()
-        if "reschedule" in q_lower or "move" in q_lower:
-            yield ("text", "I've checked the local database. You have no conflicting hard constraints in that slot. Rescheduled successfully.")
-        else:
-            yield ("text", "Quantime offline processor active. Type your query or verify Ollama service connectivity.")
+                    yield ("text", "Quantime offline processor active. Type your query or verify Ollama service connectivity.")
+            else:
+                yield ("text", f"\n[System Error: Connection to Ollama failed during recursive tool loop: {e}]")
+
+    yield from chat_loop(messages, 0)
