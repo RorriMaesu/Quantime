@@ -91,6 +91,26 @@ export default function App() {
     }, 60000);
     return () => clearInterval(timer);
   }, []);
+
+  // Helper to calculate week offset for a given date relative to today
+  const getWeekOffsetForDate = (date) => {
+    const today = new Date();
+    const todaySunday = new Date(today);
+    todaySunday.setDate(today.getDate() - today.getDay());
+    todaySunday.setHours(0, 0, 0, 0);
+    
+    const targetSunday = new Date(date);
+    targetSunday.setDate(date.getDate() - date.getDay());
+    targetSunday.setHours(0, 0, 0, 0);
+    
+    const diffTime = targetSunday.getTime() - todaySunday.getTime();
+    return Math.round(diffTime / (7 * 24 * 60 * 60 * 1000));
+  };
+
+  useEffect(() => {
+    const offset = getWeekOffsetForDate(selectedDate);
+    setWeekOffset(offset);
+  }, [selectedDate]);
   const [showMobileGuide, setShowMobileGuide] = useState(false);
   const [publicIp, setPublicIp] = useState("Loading...");
   const [hasCredentials, setHasCredentials] = useState(true);
@@ -135,6 +155,15 @@ export default function App() {
     return days;
   };
 
+  const parseTaskDate = (dateStr) => {
+    if (!dateStr) return new Date();
+    if (typeof dateStr === 'string' && dateStr.length === 10 && dateStr.includes('-')) {
+      const [year, month, day] = dateStr.split('-').map(Number);
+      return new Date(year, month - 1, day);
+    }
+    return new Date(dateStr);
+  };
+
   const isSameDay = (d1, d2) => {
     return d1.getFullYear() === d2.getFullYear() &&
            d1.getMonth() === d2.getMonth() &&
@@ -143,7 +172,7 @@ export default function App() {
 
   const getDailyWorkload = (date) => {
     return tasks.filter(t => {
-      const tDate = new Date(t.start_time);
+      const tDate = parseTaskDate(t.start_time);
       return isSameDay(tDate, date);
     });
   };
@@ -204,7 +233,7 @@ export default function App() {
       const resp = await fetch(`${API_BASE}/api/tasks?start_date=${startIso}&end_date=${endIso}&_t=${Date.now()}`);
       if (resp.ok) {
         const data = await resp.json();
-        const sorted = data.tasks.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+        const sorted = data.tasks.sort((a, b) => parseTaskDate(a.start_time) - parseTaskDate(b.start_time));
         setTasks(sorted);
       }
     } catch (e) {
@@ -608,7 +637,10 @@ export default function App() {
 
   const formatTime = (isoString) => {
     try {
-      const date = new Date(isoString);
+      if (typeof isoString === 'string' && isoString.length === 10 && isoString.includes('-')) {
+        return "All Day";
+      }
+      const date = parseTaskDate(isoString);
       return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     } catch {
       return isoString;
@@ -949,6 +981,14 @@ export default function App() {
                     const prev = new Date(visibleDate);
                     prev.setMonth(prev.getMonth() - 1);
                     setVisibleDate(prev);
+                    
+                    const currentDay = selectedDate.getDate();
+                    const newDate = new Date(prev.getFullYear(), prev.getMonth(), currentDay);
+                    if (newDate.getMonth() !== (prev.getMonth() + 12) % 12) {
+                      setSelectedDate(new Date(prev.getFullYear(), prev.getMonth() + 1, 0));
+                    } else {
+                      setSelectedDate(newDate);
+                    }
                   }}
                   className="p-1 rounded text-gray-400 hover:text-white transition-all hover:bg-gray-800 focus:outline-none"
                   title="Previous Month"
@@ -964,6 +1004,14 @@ export default function App() {
                     const next = new Date(visibleDate);
                     next.setMonth(next.getMonth() + 1);
                     setVisibleDate(next);
+                    
+                    const currentDay = selectedDate.getDate();
+                    const newDate = new Date(next.getFullYear(), next.getMonth(), currentDay);
+                    if (newDate.getMonth() !== (next.getMonth() + 12) % 12) {
+                      setSelectedDate(new Date(next.getFullYear(), next.getMonth() + 1, 0));
+                    } else {
+                      setSelectedDate(newDate);
+                    }
                   }}
                   className="p-1 rounded text-gray-400 hover:text-white transition-all hover:bg-gray-800 focus:outline-none"
                   title="Next Month"
@@ -1016,21 +1064,46 @@ export default function App() {
                 <div className="flex items-center space-x-1">
                   <button 
                     type="button"
-                    onClick={() => setWeekOffset(prev => prev - 1)}
+                    onClick={() => {
+                      setWeekOffset(prev => {
+                        const nextOffset = prev - 1;
+                        const currentDayIdx = selectedDate.getDay();
+                        const days = getDaysForOffsetWeek(nextOffset);
+                        const targetDay = days[currentDayIdx];
+                        setSelectedDate(targetDay);
+                        setVisibleDate(targetDay);
+                        return nextOffset;
+                      });
+                    }}
                     className="p-1.5 rounded-lg bg-gray-900 border border-gray-800 hover:bg-gray-800 text-gray-400 hover:text-white transition-all focus:outline-none"
                   >
                     <ChevronLeft className="h-3.5 w-3.5" />
                   </button>
                   <button 
                     type="button"
-                    onClick={() => setWeekOffset(0)}
+                    onClick={() => {
+                      setWeekOffset(0);
+                      const today = new Date();
+                      setSelectedDate(today);
+                      setVisibleDate(today);
+                    }}
                     className="px-2 py-1 rounded-lg bg-gray-900 border border-gray-800 text-[10px] font-bold text-gray-400 hover:text-white transition-all focus:outline-none"
                   >
                     Today
                   </button>
                   <button 
                     type="button"
-                    onClick={() => setWeekOffset(prev => prev + 1)}
+                    onClick={() => {
+                      setWeekOffset(prev => {
+                        const nextOffset = prev + 1;
+                        const currentDayIdx = selectedDate.getDay();
+                        const days = getDaysForOffsetWeek(nextOffset);
+                        const targetDay = days[currentDayIdx];
+                        setSelectedDate(targetDay);
+                        setVisibleDate(targetDay);
+                        return nextOffset;
+                      });
+                    }}
                     className="p-1.5 rounded-lg bg-gray-900 border border-gray-800 hover:bg-gray-800 text-gray-400 hover:text-white transition-all focus:outline-none"
                   >
                     <ChevronRight className="h-3.5 w-3.5" />
@@ -1096,12 +1169,7 @@ export default function App() {
                                      selectedDate.getFullYear() === cell.date.getFullYear();
                   const isToday = new Date().toDateString() === cell.date.toDateString();
                   
-                  const cellTasks = tasks.filter(t => {
-                    const tDate = new Date(t.start_time);
-                    return tDate.getDate() === cell.date.getDate() && 
-                           tDate.getMonth() === cell.date.getMonth() &&
-                           tDate.getFullYear() === cell.date.getFullYear();
-                  });
+                  const cellTasks = tasks.filter(t => isSameDay(parseTaskDate(t.start_time), cell.date));
                   
                   return (
                     <div 
@@ -1146,7 +1214,7 @@ export default function App() {
           <div className="space-y-4 relative pl-4 border-l border-gray-800">
             {(() => {
               const filteredTasks = tasks.filter(t => {
-                const tDate = new Date(t.start_time);
+                const tDate = parseTaskDate(t.start_time);
                 return isSameDay(tDate, selectedDate);
               });
 
@@ -1161,7 +1229,7 @@ export default function App() {
                 );
               }
 
-              const sortedTasks = [...filteredTasks].sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+              const sortedTasks = [...filteredTasks].sort((a, b) => parseTaskDate(a.start_time) - parseTaskDate(b.start_time));
               const now = currentTime;
               const isSelectedToday = isSameDay(selectedDate, now);
               const nowMinutes = now.getHours() * 60 + now.getMinutes();
@@ -1170,7 +1238,7 @@ export default function App() {
               const elements = [];
 
               sortedTasks.forEach((task) => {
-                const taskStart = new Date(task.start_time);
+                const taskStart = parseTaskDate(task.start_time);
                 const startMinutes = taskStart.getHours() * 60 + taskStart.getMinutes();
 
                 if (isSelectedToday && !timeIndicatorRendered && nowMinutes < startMinutes) {
