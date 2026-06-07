@@ -738,6 +738,64 @@ export default function App() {
     }
   };
 
+  const renderMessageContent = (text) => {
+    if (!text) return null;
+    
+    const paragraphs = text.split('\n\n');
+    
+    return paragraphs.map((para, pIdx) => {
+      const lines = para.split('\n');
+      
+      // Check if it's a bulleted list (all lines start with * or -)
+      const isList = lines.length > 0 && lines.every(line => {
+        const trimmed = line.trim();
+        return trimmed === "" || trimmed.startsWith('* ') || trimmed.startsWith('- ');
+      });
+      
+      if (isList) {
+        return (
+          <ul key={pIdx} className="list-disc pl-5 space-y-1.5 my-2 text-left">
+            {lines.map((line, lIdx) => {
+              const trimmed = line.trim();
+              if (trimmed === "") return null;
+              const cleanLine = trimmed.substring(2);
+              const parts = cleanLine.split(/(\*\*[^*]+\*\*)/g);
+              return (
+                <li key={lIdx} className="text-gray-100">
+                  {parts.map((part, partIdx) => {
+                    if (part.startsWith('**') && part.endsWith('**')) {
+                      return <strong key={partIdx} className="font-extrabold text-indigo-300">{part.slice(2, -2)}</strong>;
+                    }
+                    return part;
+                  })}
+                </li>
+              );
+            })}
+          </ul>
+        );
+      }
+      
+      return (
+        <p key={pIdx} className="leading-relaxed mb-2.5 last:mb-0 text-left">
+          {lines.map((line, lIdx) => {
+            const parts = line.split(/(\*\*[^*]+\*\*)/g);
+            return (
+              <span key={lIdx} className="block last:inline">
+                {parts.map((part, partIdx) => {
+                  if (part.startsWith('**') && part.endsWith('**')) {
+                    return <strong key={partIdx} className="font-extrabold text-indigo-300">{part.slice(2, -2)}</strong>;
+                  }
+                  return part;
+                })}
+                {lIdx < lines.length - 1 && <br />}
+              </span>
+            );
+          })}
+        </p>
+      );
+    });
+  };
+
   const toggleThinking = (id) => {
     setIsThinkingOpen(prev => ({
       ...prev,
@@ -1559,7 +1617,7 @@ export default function App() {
                       : 'bg-indigo-600 text-white rounded-tr-none shadow-md shadow-indigo-950'
                   }`}
                 >
-                  <p className="leading-relaxed">{cleanText || (isAgent ? "Generating schedule optimizations..." : "")}</p>
+                  {cleanText ? renderMessageContent(cleanText) : isAgent ? <p className="leading-relaxed">Generating schedule optimizations...</p> : null}
                   
                   {isAgent && proposalData && (
                     <div className="mt-4 p-4 rounded-xl bg-gray-900 border border-gray-800 space-y-3 shadow-lg max-w-full text-left">
