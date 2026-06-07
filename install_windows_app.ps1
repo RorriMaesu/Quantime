@@ -35,10 +35,7 @@ try {
     Write-Host "You can manage or test this task in Windows Task Scheduler under the name '$taskName'." -ForegroundColor Green
     
     # Optionally start it now
-    if ($Silent) {
-        Start-ScheduledTask -TaskName $taskName
-        Write-Host "Task started successfully!" -ForegroundColor Green
-    } else {
+    if (-not $Silent) {
         $response = Read-Host "Would you like to run the background task right now? (y/n)"
         if ($response -eq 'y' -or $response -eq 'yes') {
             Start-ScheduledTask -TaskName $taskName
