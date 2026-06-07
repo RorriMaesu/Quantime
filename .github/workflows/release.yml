@@ -1,0 +1,30 @@
+name: Compile & Publish Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & Upload Installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Build Installer with Inno Setup
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" QuantimeSetup.iss
+        shell: powershell
+
+      - name: Create Release & Upload Asset
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/QuantimeSetup.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
