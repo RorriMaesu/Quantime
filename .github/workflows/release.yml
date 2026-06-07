@@ -19,7 +19,7 @@ jobs:
 
       - name: Build Installer with Inno Setup
         run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" QuantimeSetup.iss
+          iscc QuantimeSetup.iss
         shell: powershell
 
       - name: Create Release & Upload Asset
