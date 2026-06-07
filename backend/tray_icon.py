@@ -237,7 +237,6 @@ def on_exit(icon, item):
     kill_process_tree(fastapi_proc)
     kill_process_tree(vite_proc)
     kill_process_tree(tunnel_proc)
-    sys.exit(0)
 
 def open_dashboard_when_ready():
     # Wait for backend (8000) to start accepting connections
