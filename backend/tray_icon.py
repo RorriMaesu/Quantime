@@ -51,32 +51,46 @@ def kill_process_tree(proc):
     except Exception:
         pass
 
+def find_node():
+    import shutil
+    portable = os.path.join(base_dir, "frontend", "node-portable", "node.exe")
+    if os.path.exists(portable):
+        return portable
+    global_node = shutil.which("node")
+    if global_node:
+        return global_node
+    return "node"
+
 def start_services():
     global fastapi_proc, vite_proc, tunnel_proc
     creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-    npm_cmd = "npm.cmd" if os.name == 'nt' else "npm"
     
-    # 1. Start FastAPI server using virtual environment python interpreter
-    python_exe = os.path.join(base_dir, "backend", ".venv", "Scripts", "python.exe")
-    if not os.path.exists(python_exe):
-        python_exe = sys.executable # fallback
+    # 1. Start FastAPI server using pythonw.exe
+    pythonw_exe = os.path.join(base_dir, "backend", ".venv", "Scripts", "pythonw.exe")
+    if not os.path.exists(pythonw_exe):
+        pythonw_exe = "pythonw.exe"
         
     fastapi_proc = subprocess.Popen(
-        [python_exe, "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"],
+        [pythonw_exe, "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"],
         cwd=os.path.join(base_dir, "backend"),
         creationflags=creation_flags
     )
     
-    # 2. Start Vite frontend
+    # 2. Locate Node executor and run JS scripts directly (bypassing cmd/batch files)
+    node_bin = find_node()
+    vite_js = os.path.join(base_dir, "frontend", "node_modules", "vite", "bin", "vite.js")
+    lt_js = os.path.join(base_dir, "frontend", "node_modules", "localtunnel", "bin", "lt.js")
+    
+    # 3. Start Vite frontend
     vite_proc = subprocess.Popen(
-        [npm_cmd, "run", "dev"],
+        [node_bin, vite_js],
         cwd=os.path.join(base_dir, "frontend"),
         creationflags=creation_flags
     )
     
-    # 3. Start Localtunnel gateway
+    # 4. Start Localtunnel gateway
     tunnel_proc = subprocess.Popen(
-        [npm_cmd, "run", "tunnel"],
+        [node_bin, lt_js, "--port", "5173", "--subdomain", "quantime-scheduler-green"],
         cwd=os.path.join(base_dir, "frontend"),
         creationflags=creation_flags
     )
