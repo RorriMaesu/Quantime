@@ -1314,7 +1314,7 @@ export default function App() {
                       className="w-full text-left px-3 py-2 rounded-lg text-xs font-medium bg-gray-900 hover:bg-gray-800 text-gray-200 transition-all flex items-center space-x-2"
                     >
                       <User className="h-3.5 w-3.5 text-indigo-400" />
-                      <span>Link Google OAuth</span>
+                      <span>Link Google Account</span>
                     </button>
                     <button 
                       onClick={() => { triggerSync(); setShowSettings(false); }}

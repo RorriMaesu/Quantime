@@ -25,7 +25,7 @@ Quantime supports two sync modes: **Proxy Mode** (Default / Single-Click) and **
 
 ### Option A: Single-Click Sign-In (Default)
 1.  Open the settings popover in the top-right corner of the dashboard.
-2.  Click **Link Google OAuth**.
+2.  Click **Link Google Account**.
 3.  Sign in with your personal Google account.
 4.  The system will authorize and immediately sync your next 7 days of calendar events.
 
@@ -36,7 +36,7 @@ If you prefer not to use our centralized proxy helper and want to use your own p
     `http://localhost:8000/auth/callback`
 3.  On the Quantime dashboard, open **Settings > Custom OAuth Secrets**.
 4.  Input your custom **Project ID**, **Client ID**, and **Client Secret**, and save.
-5.  Click **Link Google OAuth** to authenticate directly via your credentials.
+5.  Click **Link Google Account** to authenticate directly via your credentials.
 
 ---
 
