@@ -24,3 +24,14 @@ backend/firebase_key.json
 # Python pycache & compiled files
 __pycache__/
 *.pyc
+
+# VibeVoice cloned repo and voice presets
+backend/vibevoice_src/
+backend/user_voice_ref.wav
+backend/user_voice_ref.pt
+backend/custom_voice_preset.pt
+backend/inspect_preset.py
+backend/list_hf_files.py
+backend/test_voice_cloning.py
+backend/generate_preset_from_wav.py
+backend/find_wavs.py

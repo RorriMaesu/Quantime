@@ -383,6 +383,7 @@ class ProfileSchema(BaseModel):
     notification_lead_minutes: Optional[str] = '15'
     notification_on_start: Optional[str] = 'true'
     notification_dnd_focus: Optional[str] = 'true'
+    voice_choice: Optional[str] = 'custom_cloned'
 
 @app.get("/api/profile")
 def get_user_profile():
@@ -407,6 +408,8 @@ def get_user_profile():
         ns_row = cursor.fetchone()
         cursor.execute("SELECT value FROM user_profiles WHERE key = 'notification_dnd_focus'")
         nd_row = cursor.fetchone()
+        cursor.execute("SELECT value FROM user_profiles WHERE key = 'voice_choice'")
+        voice_row = cursor.fetchone()
         
         u_id = id_row["value"] if id_row else os.environ.get("USER_ID", "user")
         u_name = name_row["value"] if name_row else os.environ.get("USER_NAME", "User")
@@ -418,7 +421,8 @@ def get_user_profile():
             "notifications_enabled": ne_row["value"] if ne_row else 'true',
             "notification_lead_minutes": nl_row["value"] if nl_row else '15',
             "notification_on_start": ns_row["value"] if ns_row else 'true',
-            "notification_dnd_focus": nd_row["value"] if nd_row else 'true'
+            "notification_dnd_focus": nd_row["value"] if nd_row else 'true',
+            "voice_choice": voice_row["value"] if voice_row else 'custom_cloned'
         }
     except Exception as e:
         return {
@@ -429,6 +433,7 @@ def get_user_profile():
             "notification_lead_minutes": "15",
             "notification_on_start": "true",
             "notification_dnd_focus": "true",
+            "voice_choice": "custom_cloned",
             "error": str(e)
         }
     finally:
@@ -450,6 +455,8 @@ def update_user_profile(profile: ProfileSchema):
             cursor.execute("INSERT OR REPLACE INTO user_profiles (key, value) VALUES ('notification_on_start', ?)", (profile.notification_on_start,))
         if profile.notification_dnd_focus is not None:
             cursor.execute("INSERT OR REPLACE INTO user_profiles (key, value) VALUES ('notification_dnd_focus', ?)", (profile.notification_dnd_focus,))
+        if profile.voice_choice is not None:
+            cursor.execute("INSERT OR REPLACE INTO user_profiles (key, value) VALUES ('voice_choice', ?)", (profile.voice_choice,))
         conn.commit()
         return {
             "status": "success",
@@ -458,13 +465,38 @@ def update_user_profile(profile: ProfileSchema):
             "notifications_enabled": profile.notifications_enabled,
             "notification_lead_minutes": profile.notification_lead_minutes,
             "notification_on_start": profile.notification_on_start,
-            "notification_dnd_focus": profile.notification_dnd_focus
+            "notification_dnd_focus": profile.notification_dnd_focus,
+            "voice_choice": profile.voice_choice
         }
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=400, detail=f"Database update failed: {e}")
     finally:
         conn.close()
+
+from fastapi import File, UploadFile
+import shutil
+
+@app.post("/api/voice/clone")
+async def voice_clone_endpoint(file: UploadFile = File(...)):
+    """Accepts a WAV audio file, saves it, and compiles it into a VibeVoice speaker preset."""
+    try:
+        # Create user_voice_ref.wav in backend folder
+        wav_path = os.path.join(os.path.dirname(__file__), "user_voice_ref.wav")
+        with open(wav_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        logger.info(f"Saved custom reference WAV to {wav_path}")
+        
+        # Compile preset
+        preset_out_path = os.path.join(os.path.dirname(__file__), "user_voice_ref.pt")
+        from voice_processor import generate_voice_preset
+        generate_voice_preset(wav_path, preset_out_path)
+        
+        return {"status": "success", "message": "Voice profile cloned and compiled successfully!"}
+    except Exception as e:
+        logger.error(f"Voice cloning failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Cloning failed: {str(e)}")
 
 class CredentialsSchema(BaseModel):
     client_id: str
@@ -1243,7 +1275,8 @@ async def voice_chat_websocket(websocket: WebSocket):
                         clean_sentence = sentence_buffer.strip()
                         sentence_buffer = ""
                         
-                        pcm_bytes = synthesize_text_to_pcm(clean_sentence)
+                        voice_choice = get_user_profile_value('voice_choice', 'custom_cloned')
+                        pcm_bytes = synthesize_text_to_pcm(clean_sentence, voice=voice_choice)
                         if pcm_bytes:
                             if interrupt_event.is_set():
                                 break
@@ -1253,7 +1286,8 @@ async def voice_chat_websocket(websocket: WebSocket):
                     await websocket.send_json({"type": "thought", "thought": chunk})
                             
             if sentence_buffer.strip() and not interrupt_event.is_set():
-                pcm_bytes = synthesize_text_to_pcm(sentence_buffer.strip())
+                voice_choice = get_user_profile_value('voice_choice', 'custom_cloned')
+                pcm_bytes = synthesize_text_to_pcm(sentence_buffer.strip(), voice=voice_choice)
                 if pcm_bytes:
                     pcm_b64 = base64.b64encode(pcm_bytes).decode("utf-8")
                     await websocket.send_json({"type": "audio", "audio": pcm_b64})

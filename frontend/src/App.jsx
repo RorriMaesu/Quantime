@@ -22,7 +22,10 @@ import {
   Eraser,
   Settings,
   Mic,
-  MicOff
+  MicOff,
+  Volume2,
+  Disc,
+  Square
 } from 'lucide-react';
 
 // Optional: Import Firebase SDK components if initialized client-side
@@ -102,15 +105,115 @@ export default function App() {
   // Voice Chat S2S states and refs
   const [isVoiceActive, setIsVoiceActive] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState("idle"); // 'idle', 'recording', 'thinking', 'speaking'
+  const [voiceChoice, setVoiceChoice] = useState("custom_cloned");
+  const [showVoiceCloningDrawer, setShowVoiceCloningDrawer] = useState(false);
+  const [isCloningRecording, setIsCloningRecording] = useState(false);
+  const [cloningAudioBlob, setCloningAudioBlob] = useState(null);
+  const [cloningRecordSeconds, setCloningRecordSeconds] = useState(0);
+  const [cloningStatus, setCloningStatus] = useState("idle"); // 'idle', 'recording', 'uploading', 'success', 'error'
+  const [cloningError, setCloningError] = useState("");
   const [activeVoiceText, setActiveVoiceText] = useState("");
   const [activeVoiceThoughts, setActiveVoiceThoughts] = useState("");
   const [voiceError, setVoiceError] = useState("");
+  const mediaRecorderRef = useRef(null);
+  const recordIntervalRef = useRef(null);
+  const audioChunksRef = useRef([]);
+
   const wsRef = useRef(null);
   const audioContextRef = useRef(null);
   const audioQueueRef = useRef([]);
   const isPlayingRef = useRef(false);
   const activeAudioSourceRef = useRef(null);
   const recognitionRef = useRef(null);
+
+  const startCloningRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const options = { mimeType: 'audio/webm' };
+      let recorder;
+      try {
+        recorder = new MediaRecorder(stream, options);
+      } catch (e) {
+        recorder = new MediaRecorder(stream);
+      }
+      
+      mediaRecorderRef.current = recorder;
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+      
+      recorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+        setCloningAudioBlob(audioBlob);
+        stream.getTracks().forEach(track => track.stop());
+      };
+      
+      setCloningRecordSeconds(0);
+      setCloningStatus("recording");
+      setIsCloningRecording(true);
+      setCloningError("");
+      
+      recorder.start(200);
+      
+      recordIntervalRef.current = setInterval(() => {
+        setCloningRecordSeconds(prev => {
+          if (prev >= 15) {
+            stopCloningRecording();
+            return prev;
+          }
+          return prev + 1;
+        });
+      }, 1000);
+    } catch (err) {
+      console.error("Failed to start voice cloning recording:", err);
+      setCloningError("Microphone access denied or error: " + err.message);
+      setCloningStatus("error");
+    }
+  };
+
+  const stopCloningRecording = () => {
+    if (recordIntervalRef.current) {
+      clearInterval(recordIntervalRef.current);
+      recordIntervalRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
+    setIsCloningRecording(false);
+    setCloningStatus("idle");
+  };
+
+  const submitVoiceClone = async () => {
+    if (!cloningAudioBlob) return;
+    setCloningStatus("uploading");
+    setCloningError("");
+    
+    try {
+      const formData = new FormData();
+      formData.append("file", cloningAudioBlob, "user_voice_ref.wav");
+      
+      const response = await fetch("/api/voice/clone", {
+        method: "POST",
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      
+      const data = await response.json();
+      setCloningStatus("success");
+      setVoiceChoice("custom_cloned");
+      await saveNotificationSettings(notificationsEnabled, notificationLeadMinutes, notificationOnStart, notificationDndFocus, "custom_cloned");
+    } catch (err) {
+      console.error("Failed to compile voice clone:", err);
+      setCloningError("Failed to clone voice: " + err.message);
+      setCloningStatus("error");
+    }
+  };
 
   const startVoiceChat = async () => {
     try {
@@ -614,6 +717,7 @@ export default function App() {
           setNotificationLeadMinutes(parseInt(data.notification_lead_minutes) || 15);
           setNotificationOnStart(data.notification_on_start === 'true');
           setNotificationDndFocus(data.notification_dnd_focus === 'true');
+          setVoiceChoice(data.voice_choice || "custom_cloned");
           setChats(prev => prev.map(c => {
             if (c.id === 'welcome') {
               return {
@@ -686,7 +790,7 @@ export default function App() {
     }
   };
 
-  const saveNotificationSettings = async (enabled, leadMins, onStart, dndFocus) => {
+  const saveNotificationSettings = async (enabled, leadMins, onStart, dndFocus, voice = voiceChoice) => {
     try {
       await fetch(`/api/profile`, {
         method: 'POST',
@@ -699,7 +803,8 @@ export default function App() {
           notifications_enabled: enabled ? 'true' : 'false',
           notification_lead_minutes: String(leadMins),
           notification_on_start: onStart ? 'true' : 'false',
-          notification_dnd_focus: dndFocus ? 'true' : 'false'
+          notification_dnd_focus: dndFocus ? 'true' : 'false',
+          voice_choice: voice
         })
       });
     } catch (e) {
@@ -1725,6 +1830,41 @@ export default function App() {
                           )}
                         </div>
                       )}
+                    </div>
+
+                    <div className="border-t border-gray-800/80 pt-2 mt-2">
+                      <div className="px-2 py-1 text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
+                        Voice Profile
+                      </div>
+                      <div className="mt-1 space-y-2 px-1">
+                        <select 
+                          value={voiceChoice}
+                          onChange={async (e) => {
+                            const val = e.target.value;
+                            setVoiceChoice(val);
+                            await saveNotificationSettings(notificationsEnabled, notificationLeadMinutes, notificationOnStart, notificationDndFocus, val);
+                          }}
+                          className="w-full bg-gray-900 border border-gray-805 text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-indigo-550 text-gray-250 font-medium"
+                        >
+                          <option value="custom_cloned">👤 My Cloned Voice</option>
+                          <option value="af_heart">❤️ Kokoro Heart</option>
+                          <option value="af_bella">Bella (Female)</option>
+                          <option value="af_nicole">Nicole (Female)</option>
+                          <option value="am_adam">Adam (Male)</option>
+                          <option value="am_michael">Michael (Male)</option>
+                        </select>
+                        
+                        <button 
+                          onClick={() => {
+                            setShowVoiceCloningDrawer(true);
+                            setShowSettings(false);
+                          }}
+                          className="w-full text-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-950/45 text-indigo-300 border border-indigo-900/40 hover:bg-indigo-900/35 transition-all flex items-center justify-center space-x-1.5"
+                        >
+                          <Volume2 className="h-3 w-3" />
+                          <span>Clone My Voice</span>
+                        </button>
+                      </div>
                     </div>
 
                     <div className="border-t border-gray-800/80 pt-2 mt-2">
@@ -2932,6 +3072,129 @@ export default function App() {
               </div>
             </div>
 
+          </div>
+        </div>
+      )}
+      
+      {showVoiceCloningDrawer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-955/80 backdrop-blur-md animate-fade-in">
+          <div 
+            onClick={() => { if (!isCloningRecording) setShowVoiceCloningDrawer(false); }}
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
+          ></div>
+          
+          <div className="relative w-full max-w-md bg-gray-900 border border-gray-800 rounded-3xl p-6 md:p-8 shadow-2xl z-10 animate-slide">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"></div>
+            
+            <div className="flex justify-between items-center pb-3 border-b border-gray-800 mb-6">
+              <h3 className="text-base font-bold text-gray-100 flex items-center space-x-2">
+                <Volume2 className="h-5 w-5 text-indigo-400 animate-pulse" />
+                <span>Clone Your Voice</span>
+              </h3>
+              <button 
+                type="button"
+                disabled={isCloningRecording}
+                onClick={() => setShowVoiceCloningDrawer(false)}
+                className="text-gray-500 hover:text-gray-300 text-xs font-semibold focus:outline-none disabled:opacity-30"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              <div className="bg-indigo-950/20 border border-indigo-900/30 rounded-2xl p-4 text-center">
+                <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-1.5">Calibration Phrase</p>
+                <p className="text-sm text-gray-150 font-medium italic leading-relaxed">
+                  "This is my personal voice profile for the Quantime Scheduling Orchestrator."
+                </p>
+              </div>
+
+              <div className="flex flex-col items-center justify-center space-y-3">
+                {isCloningRecording ? (
+                  <div className="flex flex-col items-center space-y-2">
+                    <div className="h-16 w-16 bg-red-600/20 border-2 border-red-500 text-red-400 rounded-full flex items-center justify-center scale-105 animate-pulse">
+                      <Disc className="h-6 w-6 animate-spin" />
+                    </div>
+                    <span className="text-[11px] font-bold text-red-400 tracking-wider">
+                      Recording: {cloningRecordSeconds}s / 15s Max
+                    </span>
+                    <span className="text-[10px] text-gray-500">Say the phrase clearly. VibeVoice needs 6-10 seconds of speech.</span>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center space-y-2">
+                    <div className="h-16 w-16 bg-indigo-950 border border-indigo-900 text-indigo-400 rounded-full flex items-center justify-center">
+                      <Mic className="h-6 w-6" />
+                    </div>
+                    <span className="text-xs text-gray-400 font-semibold">Ready to record</span>
+                  </div>
+                )}
+              </div>
+
+              {cloningAudioBlob && !isCloningRecording && (
+                <div className="bg-gray-955 border border-gray-805 rounded-2xl p-3 flex flex-col items-center space-y-2">
+                  <span className="text-[10px] font-bold text-gray-450 uppercase tracking-wider">Audio Playback Preview</span>
+                  <audio 
+                    src={URL.createObjectURL(cloningAudioBlob)} 
+                    controls 
+                    className="w-full h-8 max-w-xs accent-indigo-500" 
+                  />
+                </div>
+              )}
+
+              {cloningError && (
+                <div className="p-3 bg-red-955/20 border border-red-900/40 rounded-xl text-center">
+                  <span className="text-xs text-red-400 font-medium block">{cloningError}</span>
+                </div>
+              )}
+
+              {cloningStatus === "success" && (
+                <div className="p-3 bg-emerald-950/25 border border-emerald-900/40 rounded-xl text-center flex flex-col items-center space-y-1">
+                  <span className="text-xs text-emerald-400 font-bold block">✨ Voice Cloned Successfully!</span>
+                  <span className="text-[10px] text-gray-405">Quantime will now respond to you in your own voice.</span>
+                </div>
+              )}
+
+              <div className="flex space-x-3 pt-2">
+                {isCloningRecording ? (
+                  <button
+                    onClick={stopCloningRecording}
+                    className="flex-1 bg-red-650 hover:bg-red-500 text-white font-bold py-3 px-4 rounded-xl text-xs transition-all flex items-center justify-center space-x-1.5 focus:outline-none"
+                  >
+                    <Square className="h-4 w-4 fill-white" />
+                    <span>Stop Recording</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={startCloningRecording}
+                    disabled={cloningStatus === "uploading"}
+                    className="flex-1 bg-indigo-650 hover:bg-indigo-500 text-white font-bold py-3 px-4 rounded-xl text-xs transition-all flex items-center justify-center space-x-1.5 focus:outline-none disabled:opacity-50"
+                  >
+                    <Mic className="h-4 w-4" />
+                    <span>Start Recording</span>
+                  </button>
+                )}
+
+                {cloningAudioBlob && !isCloningRecording && (
+                  <button
+                    onClick={submitVoiceClone}
+                    disabled={cloningStatus === "uploading"}
+                    className="flex-1 bg-gradient-to-r from-emerald-650 to-teal-650 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 px-4 rounded-xl text-xs transition-all flex items-center justify-center space-x-1.5 focus:outline-none disabled:opacity-50"
+                  >
+                    {cloningStatus === "uploading" ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                        <span>Compiling...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Volume2 className="h-4 w-4" />
+                        <span>Submit & Clone</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
