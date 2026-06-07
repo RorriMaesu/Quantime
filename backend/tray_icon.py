@@ -22,14 +22,34 @@ def lock_single_instance():
         sys.exit(0)
 
 def check_and_start_ollama():
-    """Checks if Ollama is listening on port 11434; if not, attempts to launch it silently."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(1)
+    """Ensures the Ollama GUI application is running (showing in the tray) by cleaning up headless zombies."""
+    gui_running = False
     try:
-        s.connect(('127.0.0.1', 11434))
-        s.close()
-        # Already running
+        out = subprocess.check_output(
+            'wmic process where "name=\'ollama.exe\'" get commandline',
+            shell=True,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        ).decode('utf-8', errors='ignore')
+        
+        lines = [line.strip() for line in out.splitlines() if line.strip()]
+        for line in lines:
+            if "CommandLine" in line:
+                continue
+            if "serve" not in line.lower():
+                gui_running = True
+                break
+    except Exception:
+        pass
+
+    if gui_running:
+        # GUI is already active in the system tray; do nothing
         return
+
+    # Kill any headless processes to free up port 11434
+    try:
+        subprocess.run(["taskkill", "/F", "/IM", "ollama.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+        subprocess.run(["taskkill", "/F", "/IM", "llama-server.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+        time.sleep(0.5)
     except Exception:
         pass
 
@@ -39,7 +59,6 @@ def check_and_start_ollama():
         for filename in ["ollama app.exe", "Ollama.exe", "ollama.exe"]:
             ollama_path = os.path.join(local_appdata, "Programs", "Ollama", filename)
             if os.path.exists(ollama_path):
-                # Launch Ollama app; as a GUI process, it automatically collapses to the system tray
                 subprocess.Popen([ollama_path])
                 return
 
