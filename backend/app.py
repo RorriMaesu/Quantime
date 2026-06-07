@@ -80,7 +80,7 @@ if os.path.exists(FIREBASE_KEY_PATH) or os.environ.get("FIREBASE_APPLICATION_CRE
     except Exception as e:
         logger.error(f"Firebase initialization exception: {e}. Defaulting to MOCK mode.")
 else:
-    logger.warning("Firebase credentials key missing. Firestore real-time sync operating in MOCK mode.")
+    logger.info("Firebase credentials key missing. Firestore real-time sync operating in MOCK mode.")
 
 # =====================================================================
 # Real-Time Firestore Synchronization Logic
