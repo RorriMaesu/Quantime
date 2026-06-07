@@ -23,29 +23,65 @@ def lock_single_instance():
 
 def check_and_start_ollama():
     """Ensures the Ollama GUI application is running (showing in the tray) by cleaning up headless zombies."""
+    import socket
+    
     gui_running = False
+    headless_running = False
+    has_inaccessible_process = False
+    
+    # 1. Inspect processes using PowerShell Get-CimInstance
     try:
-        out = subprocess.check_output(
-            'wmic process where "name=\'ollama.exe\'" get commandline',
-            shell=True,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        ).decode('utf-8', errors='ignore')
+        # Run PowerShell to get PID and CommandLine of all ollama.exe processes
+        cmd = ["powershell.exe", "-NoProfile", "-Command", 
+               "Get-CimInstance Win32_Process -Filter \"name = 'ollama.exe'\" | ForEach-Object { [PSCustomObject]@{Id=$_.ProcessId; Cmd=$_.CommandLine} } | ConvertTo-Json"]
         
-        lines = [line.strip() for line in out.splitlines() if line.strip()]
-        for line in lines:
-            if "CommandLine" in line:
-                continue
-            if "serve" not in line.lower():
-                gui_running = True
-                break
+        out = subprocess.check_output(
+            cmd,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        ).decode('utf-8', errors='ignore').strip()
+        
+        if out:
+            # Parse JSON output (could be a single object or list of objects)
+            import json
+            data = json.loads(out)
+            processes = data if isinstance(data, list) else [data]
+            
+            for p in processes:
+                cmdline = p.get("Cmd")
+                if not cmdline:
+                    # Inaccessible process (likely running as Administrator / elevated)
+                    has_inaccessible_process = True
+                    continue
+                
+                if "serve" in cmdline.lower():
+                    headless_running = True
+                else:
+                    gui_running = True
     except Exception:
+        # Fallback if PowerShell query fails
         pass
 
     if gui_running:
         # GUI is already active in the system tray; do nothing
         return
 
-    # Kill any headless processes to free up port 11434
+    # Check if port 11434 is occupied
+    port_in_use = False
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(0.5)
+    try:
+        s.connect(('127.0.0.1', 11434))
+        port_in_use = True
+        s.close()
+    except Exception:
+        pass
+
+    # If port is in use and we have an inaccessible process, we cannot kill it to start the GUI
+    if port_in_use and has_inaccessible_process:
+        # Avoid print/warning blocking or stdout interference
+        return
+
+    # Kill any accessible headless processes to free up port 11434
     try:
         subprocess.run(["taskkill", "/F", "/IM", "ollama.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
         subprocess.run(["taskkill", "/F", "/IM", "llama-server.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
@@ -127,10 +163,18 @@ def start_services():
     if not os.path.exists(pythonw_exe):
         pythonw_exe = "pythonw.exe"
         
+    fastapi_log_path = os.path.join(base_dir, "backend", "fastapi.log")
+    try:
+        log_file = open(fastapi_log_path, "a")
+    except Exception:
+        log_file = subprocess.DEVNULL
+        
     fastapi_proc = subprocess.Popen(
         [pythonw_exe, "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"],
         cwd=os.path.join(base_dir, "backend"),
-        creationflags=creation_flags
+        creationflags=creation_flags,
+        stdout=log_file,
+        stderr=log_file
     )
     
     # 2. Locate Node executor and run JS scripts directly (bypassing cmd/batch files)
@@ -139,10 +183,18 @@ def start_services():
     lt_js = os.path.join(base_dir, "frontend", "node_modules", "localtunnel", "bin", "lt.js")
     
     # 3. Start Vite frontend
+    vite_log_path = os.path.join(base_dir, "frontend", "vite.log")
+    try:
+        vite_log = open(vite_log_path, "a")
+    except Exception:
+        vite_log = subprocess.DEVNULL
+        
     vite_proc = subprocess.Popen(
         [node_bin, vite_js],
         cwd=os.path.join(base_dir, "frontend"),
-        creationflags=creation_flags
+        creationflags=creation_flags,
+        stdout=vite_log,
+        stderr=vite_log
     )
     
     # 4. Start Localtunnel gateway
