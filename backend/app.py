@@ -1831,7 +1831,7 @@ frontend_dist_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..
 if os.path.exists(frontend_dist_path):
     app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dist_path, "assets")), name="assets")
     
-    @app.get("/{catchall:path}")
+    @app.api_route("/{catchall:path}", methods=["GET", "HEAD"])
     def serve_frontend(catchall: str):
         if catchall.startswith("api") or catchall.startswith("auth"):
             raise HTTPException(status_code=404, detail="Not Found")

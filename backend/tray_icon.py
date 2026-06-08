@@ -293,23 +293,59 @@ def monitor_localtunnel():
     global tunnel_proc
     time.sleep(15)  # Wait for initial startup
     
+    log_dir = os.path.join(os.path.expanduser("~"), ".quantime")
+    log_file = os.path.join(log_dir, "localtunnel.log")
+    consecutive_failures = 0
+    
     while running:
-        tunnel_healthy = False
-        try:
-            import urllib.request
-            req = urllib.request.Request(
-                "https://quantime-scheduler-green.loca.lt",
-                headers={"Bypass-Tunnel-Reminder": "true"}  # Bypass the localtunnel landing page
-            )
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                if resp.status == 200:
-                    tunnel_healthy = True
-        except Exception as e:
-            # If the HTTP status is not a 5xx error (e.g. 404, 401, 403), the tunnel is still active
-            if hasattr(e, 'code') and e.code < 500:
-                tunnel_healthy = True
+        # 1. Check if the process has crashed/exited
+        if tunnel_proc is not None and tunnel_proc.poll() is not None:
+            # Process exited. Force restart immediately.
+            tunnel_healthy = False
+            consecutive_failures = 3  # Trigger restart logic below
+        else:
+            tunnel_url = None
+            if os.path.exists(log_file):
+                try:
+                    with open(log_file, "r") as f:
+                        lines = f.readlines()
+                    for line in reversed(lines):
+                        if "your url is:" in line:
+                            parts = line.split("your url is:")
+                            if len(parts) > 1:
+                                url = parts[1].strip()
+                                if url:
+                                    tunnel_url = url
+                                    break
+                except Exception:
+                    pass
+                    
+            if not tunnel_url:
+                time.sleep(5)
+                continue
                 
-        if not tunnel_healthy and running:
+            tunnel_healthy = False
+            try:
+                import urllib.request
+                req = urllib.request.Request(
+                    tunnel_url,
+                    headers={"Bypass-Tunnel-Reminder": "true"}  # Bypass the localtunnel landing page
+                )
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    if resp.status == 200:
+                        tunnel_healthy = True
+            except Exception as e:
+                # If the HTTP status is not a 5xx error (e.g. 404, 401, 403), the tunnel is still active
+                if hasattr(e, 'code') and e.code < 500:
+                    tunnel_healthy = True
+                    
+            if tunnel_healthy:
+                consecutive_failures = 0
+            else:
+                consecutive_failures += 1
+                
+        if consecutive_failures >= 3 and running:
+            consecutive_failures = 0
             # Force restart the tunnel process
             kill_process_tree(tunnel_proc)
             time.sleep(1)
@@ -336,7 +372,7 @@ def monitor_localtunnel():
                     stderr=tunnel_log
                 )
             
-        time.sleep(15)
+        time.sleep(30)
 
 def main():
     lock_single_instance()
