@@ -11,6 +11,7 @@ logger = logging.getLogger("quantime.voice_processor")
 if platform.system() == "Windows":
     try:
         import winreg
+        # List of registry keys to scan (HKCU, HKLM)
         for hkey, subkey in [
             (winreg.HKEY_CURRENT_USER, "Environment"),
             (winreg.HKEY_LOCAL_MACHINE, r"System\CurrentControlSet\Control\Session Manager\Environment")
@@ -28,6 +29,30 @@ if platform.system() == "Windows":
                         i += 1
             except OSError:
                 pass
+        
+        # Scan HKEY_USERS to resolve standard user profiles when running elevated as Administrator
+        try:
+            with winreg.OpenKey(winreg.HKEY_USERS, "") as users_key:
+                u_idx = 0
+                while True:
+                    sid_name = winreg.EnumKey(users_key, u_idx)
+                    if not sid_name.startswith(".") and len(sid_name) > 10:
+                        try:
+                            with winreg.OpenKey(winreg.HKEY_USERS, rf"{sid_name}\Environment", 0, winreg.KEY_READ) as env_key:
+                                e_idx = 0
+                                while True:
+                                    name, value, val_type = winreg.EnumValue(env_key, e_idx)
+                                    if name in ("HF_HOME", "HF_HUB_CACHE", "OLLAMA_MODELS"):
+                                        if name not in os.environ:
+                                            expanded_value = os.path.expandvars(str(value))
+                                            os.environ[name] = expanded_value
+                                            logger.info(f"Restored SID {sid_name} env: {name}={expanded_value}")
+                                    e_idx += 1
+                        except OSError:
+                            pass
+                    u_idx += 1
+        except OSError:
+            pass
     except Exception as e:
         logger.warning(f"Failed to load user environment registry: {e}")
 
