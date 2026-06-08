@@ -4,7 +4,7 @@
 [Setup]
 AppId={{D37E618A-706E-45E4-A159-4E6DF9B53A04}}
 AppName=Quantime
-AppVersion=1.2.6
+AppVersion=1.2.7
 AppPublisher=RorriMaesu
 DefaultDirName={userpf}\Quantime
 DefaultGroupName=Quantime
@@ -23,34 +23,12 @@ Name: "{group}\Quantime"; Filename: "{app}\backend\.venv\Scripts\pythonw.exe"; P
 Name: "{commondesktop}\Quantime"; Filename: "{app}\backend\.venv\Scripts\pythonw.exe"; Parameters: """{app}\backend\tray_icon.py"""
 
 [Run]
-; Launch Quantime post-install
+; Run the post-install configuration wizard in a visible PowerShell window automatically after copying files
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{app}\post_install_wizard.ps1"""; StatusMsg: "Configuring environment and pre-caching AI models (this may take a few minutes)..."
+; Launch Quantime post-install (after configuration wizard finishes)
 Filename: "{app}\backend\.venv\Scripts\pythonw.exe"; Parameters: """{app}\backend\tray_icon.py"""; Flags: postinstall nowait skipifsilent; Description: "Launch Quantime"
 
 [Code]
-procedure CurStepChanged(CurStep: TSetupStep);
-var
-  ResultCode: Integer;
-begin
-  if CurStep = ssPostInstall then
-  begin
-    // Configure progress page settings with a marquee progress bar
-    WizardForm.StatusLabel.Caption := 'Configuring local environment and compiling assets (this may take a few minutes)...';
-    WizardForm.ProgressGauge.Style := npbstMarquee;
-    
-    // Launch PowerShell post-install synchronously to prevent thread starvation and CallSpawnServer timeouts
-    if not Exec('powershell.exe', '-ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\post_install_wizard.ps1') + '" -Silent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-    begin
-      MsgBox('Failed to run environment post-installation configuration.', mbError, MB_OK);
-      Exit;
-    end;
-    
-    if ResultCode <> 0 then
-    begin
-      MsgBox('Environment configuration completed with error code: ' + IntToStr(ResultCode), mbInformation, MB_OK);
-    end;
-  end;
-end;
-
 function GetUninstallString(): String;
 var
   sUnInstPath: String;
@@ -70,6 +48,10 @@ var
   iResultCode: Integer;
 begin
   Result := True;
+  
+  // Terminate any running Quantime processes first to release file locks and prevent reboot requests
+  Exec('powershell.exe', '-NoProfile -NonInteractive -Command "Get-Process | Where-Object { $_.Path -and ($_.Path -like ''*Quantime*'') } | Stop-Process -Force"', '', SW_HIDE, ewWaitUntilTerminated, iResultCode);
+
   sUnInstString := GetUninstallString();
   if sUnInstString <> '' then
   begin
