@@ -195,7 +195,12 @@ export default function App() {
           console.warn("Local mic recording streaming initialization failed:", recorderErr);
         }
         
-        startSpeechRecognition();
+        if (!voiceMediaRecorderRef.current) {
+          console.log("SpeechRecognition: Local mic streaming not active. Falling back to browser SpeechRecognition.");
+          startSpeechRecognition();
+        } else {
+          console.log("SpeechRecognition: Local mic streaming is active. Disabling browser SpeechRecognition to prevent device conflicts.");
+        }
       };
       
       ws.onmessage = async (event) => {
