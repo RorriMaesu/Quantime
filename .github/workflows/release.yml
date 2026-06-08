@@ -11,16 +11,19 @@ permissions:
 jobs:
   build:
     name: Build & Upload Installer
-    runs-on: windows-2022
+    runs-on: windows-latest
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
 
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+
       - name: Build Installer with Inno Setup
-        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
-        with:
-          path: QuantimeSetup.iss
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" QuantimeSetup.iss
+        shell: powershell
 
       - name: Create Release & Upload Asset
         uses: softprops/action-gh-release@v1
