@@ -4,7 +4,7 @@
 [Setup]
 AppId={{D37E618A-706E-45E4-A159-4E6DF9B53A04}}
 AppName=Quantime
-AppVersion=1.3.7
+AppVersion=1.3.8
 AppPublisher=RorriMaesu
 DefaultDirName={userpf}\Quantime
 DefaultGroupName=Quantime
@@ -45,8 +45,10 @@ type
 
 function PeekMessage(var lpMsg: TWinMsg; hWnd: HWND; wMsgFilterMin, wMsgFilterMax, wRemoveMsg: Cardinal): Boolean;
   external 'PeekMessageW@user32.dll stdcall';
+
 function TranslateMessage(const lpMsg: TWinMsg): Boolean;
   external 'TranslateMessage@user32.dll stdcall';
+
 function DispatchMessage(const lpMsg: TWinMsg): Longint;
   external 'DispatchMessageW@user32.dll stdcall';
 
@@ -68,6 +70,7 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
   ProgressFile: String;
+  AnsiContent: AnsiString;
   Content: String;
   PctStr: String;
   MsgStr: String;
@@ -103,8 +106,9 @@ begin
         
         LoopsCount := LoopsCount + 1;
 
-        if LoadStringFromFile(ProgressFile, Content) then
+        if LoadStringFromFile(ProgressFile, AnsiContent) then
         begin
+          Content := String(AnsiContent);
           DelimiterPos := Pos('|', Content);
           if DelimiterPos > 0 then
           begin
