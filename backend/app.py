@@ -1,13 +1,70 @@
 import os
 import sys
-import time
 import platform
 
 # Set programmatic ProgramData shared HF_HOME default on Windows if not already set
 if platform.system() == "Windows" and not os.environ.get("HF_HOME"):
     program_data = os.environ.get("ProgramData") or os.environ.get("ALLUSERSPROFILE") or "C:\\ProgramData"
     os.environ["HF_HOME"] = os.path.abspath(os.path.join(program_data, "Quantime", "hf_cache"))
+
+# On Windows, when run under background environments (like Task Scheduler/VBScript/Installer),
+# user environment variables (such as custom HF_HOME or OLLAMA_MODELS) may be missing or default to the Admin profile.
+# We restore them directly from the registry to ensure offline caches are resolved correctly before any other imports.
+if platform.system() == "Windows":
+    try:
+        import winreg
+        # List of registry keys to scan (HKCU, HKLM)
+        for hkey, subkey in [
+            (winreg.HKEY_CURRENT_USER, "Environment"),
+            (winreg.HKEY_LOCAL_MACHINE, r"System\CurrentControlSet\Control\Session Manager\Environment")
+        ]:
+            try:
+                with winreg.OpenKey(hkey, subkey, 0, winreg.KEY_READ) as key:
+                    i = 0
+                    while True:
+                        name, value, val_type = winreg.EnumValue(key, i)
+                        if name in ("HF_HOME", "HF_HUB_CACHE", "OLLAMA_MODELS"):
+                            expanded_value = os.path.expandvars(str(value))
+                            # Always override if the registry has a configured path
+                            if os.environ.get(name) != expanded_value:
+                                os.environ[name] = expanded_value
+                                print(f"Early Boot: Restored registry env {name}={expanded_value}", flush=True)
+                        i += 1
+            except OSError:
+                pass
+        
+        # Scan HKEY_USERS to resolve standard user profiles when running elevated as Administrator
+        try:
+            with winreg.OpenKey(winreg.HKEY_USERS, "") as users_key:
+                u_idx = 0
+                while True:
+                    sid_name = winreg.EnumKey(users_key, u_idx)
+                    if not sid_name.startswith(".") and len(sid_name) > 10:
+                        try:
+                            with winreg.OpenKey(winreg.HKEY_USERS, rf"{sid_name}\Environment", 0, winreg.KEY_READ) as env_key:
+                                e_idx = 0
+                                while True:
+                                    name, value, val_type = winreg.EnumValue(env_key, e_idx)
+                                    if name in ("HF_HOME", "HF_HUB_CACHE", "OLLAMA_MODELS"):
+                                        expanded_value = os.path.expandvars(str(value))
+                                        # Always override if registry has configured path
+                                        if os.environ.get(name) != expanded_value:
+                                            os.environ[name] = expanded_value
+                                            print(f"Early Boot: Restored SID {sid_name} env {name}={expanded_value}", flush=True)
+                                    e_idx += 1
+                        except OSError:
+                            pass
+                    u_idx += 1
+        except OSError:
+            pass
+    except Exception as e:
+        print(f"Early Boot Warning: Failed to load user environment registry: {e}", flush=True)
+
+# Force offline mode for Hugging Face Hub before importing dependencies
+os.environ["HF_HUB_OFFLINE"] = "1"
+
 import asyncio
+import time
 import logging
 import urllib.request
 import json
