@@ -89,19 +89,61 @@ def check_and_start_ollama():
     except Exception:
         pass
 
+    import shutil
+    possible_paths = []
+    
+    # 1. Check LOCALAPPDATA
     local_appdata = os.environ.get("LOCALAPPDATA")
     if local_appdata:
-        # Search for GUI app first (with space), then fall back to standard names
         for filename in ["ollama app.exe", "Ollama.exe", "ollama.exe"]:
-            ollama_path = os.path.join(local_appdata, "Programs", "Ollama", filename)
-            if os.path.exists(ollama_path):
-                startupinfo = None
-                if os.name == 'nt':
-                    startupinfo = subprocess.STARTUPINFO()
-                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                    startupinfo.wShowWindow = 6  # SW_MINIMIZE
-                subprocess.Popen([ollama_path], startupinfo=startupinfo)
-                return
+            possible_paths.append(os.path.join(local_appdata, "Programs", "Ollama", filename))
+            
+    # 2. Check System PATH (shutil.which)
+    path_exe = shutil.which("ollama") or shutil.which("ollama.exe")
+    if path_exe:
+        possible_paths.append(path_exe)
+        # Also look in the same directory as the PATH executable for the GUI app
+        path_dir = os.path.dirname(path_exe)
+        for filename in ["ollama app.exe", "Ollama.exe"]:
+            possible_paths.append(os.path.join(path_dir, filename))
+            
+    # 3. Check Windows Registry uninstall keys
+    if os.name == 'nt':
+        try:
+            import winreg
+            for hive in [winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE]:
+                for view in [0, winreg.KEY_WOW64_32KEY, winreg.KEY_WOW64_64KEY]:
+                    try:
+                        key_path = r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
+                        with winreg.OpenKeyEx(hive, key_path, 0, winreg.KEY_READ | view) as key:
+                            info = winreg.QueryInfoKey(key)
+                            for idx in range(info[0]):
+                                sub_name = winreg.EnumKey(key, idx)
+                                try:
+                                    with winreg.OpenKey(key, sub_name) as subkey:
+                                        disp_name, _ = winreg.QueryValueEx(subkey, "DisplayName")
+                                        if "Ollama" in disp_name:
+                                            loc, _ = winreg.QueryValueEx(subkey, "InstallLocation")
+                                            if loc:
+                                                for filename in ["ollama app.exe", "Ollama.exe", "ollama.exe"]:
+                                                    possible_paths.append(os.path.join(loc, filename))
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    # Launch the first existing executable path
+    for ollama_path in possible_paths:
+        if os.path.exists(ollama_path):
+            startupinfo = None
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 6  # SW_MINIMIZE
+            subprocess.Popen([ollama_path], startupinfo=startupinfo)
+            return
 
 # Add directory root to path
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
