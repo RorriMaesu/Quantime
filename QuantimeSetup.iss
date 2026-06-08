@@ -16,18 +16,98 @@ PrivilegesRequired=admin
 
 [Files]
 ; Copy all project files except ignored ones
-Source: "*"; DestDir: "{app}"; Excludes: "backend\.venv\*;frontend\node_modules\*;quantime.db;backend\quantime.db;*chroma_db\*;backend\.env;dist\*"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "*"; DestDir: "{app}"; Excludes: "backend\.venv,frontend\node_modules,quantime.db,backend\quantime.db,*chroma_db,backend\.env,dist"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
 Name: "{group}\Quantime"; Filename: "{app}\run_quantime_hidden.vbs"
 Name: "{commondesktop}\Quantime"; Filename: "{app}\run_quantime_hidden.vbs"
 
 [Run]
-; Run the automated post-install script silently to setup Python, Node, Ollama, and LLMs
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\post_install_wizard.ps1"" -Silent"; StatusMsg: "Configuring local environment and launching background services..."; Flags: runhidden
+; Launch Quantime post-install
 Filename: "wscript.exe"; Parameters: """{app}\run_quantime_hidden.vbs"""; Flags: postinstall nowait skipifsilent; Description: "Launch Quantime"
 
 [Code]
+// Helper to parse progress file: "Percentage|Message"
+procedure DecodeProgress(Line: String; var Pct: Integer; var Msg: String);
+var
+  SepPos: Integer;
+begin
+  SepPos := Pos('|', Line);
+  if SepPos > 0 then
+  begin
+    Pct := StrToIntDef(Copy(Line, 1, SepPos - 1), 0);
+    Msg := Copy(Line, SepPos + 1, Length(Line) - SepPos);
+  end
+  else
+  begin
+    Pct := 0;
+    Msg := Line;
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+  ProgressFile: String;
+  Lines: TArrayOfString;
+  Pct: Integer;
+  Msg: String;
+  Finished: Boolean;
+  TimeoutCount: Integer;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    ProgressFile := ExpandConstant('{userprofile}\.quantime\install_progress.txt');
+    
+    // Ensure data folder and starting sentinel exists
+    ForceDirectories(ExpandConstant('{userprofile}\.quantime'));
+    SaveStringToFile(ProgressFile, '0|Initializing setup wizard...', False);
+    
+    // Configure progress page settings
+    WizardForm.StatusLabel.Caption := 'Configuring local environment and compiling assets...';
+    WizardForm.ProgressGauge.Style := npbstNormal;
+    WizardForm.ProgressGauge.Position := 0;
+    
+    // Launch PowerShell post-install asynchronously
+    if not Exec('powershell.exe', '-ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\post_install_wizard.ps1') + '" -Silent', '', SW_HIDE, ewNoWait, ResultCode) then
+    begin
+      MsgBox('Failed to start environment post-installation configuration.', mbError, MB_OK);
+      Exit;
+    end;
+    
+    Finished := False;
+    TimeoutCount := 0;
+    
+    while not Finished do
+    begin
+      Sleep(200);
+      WizardForm.Refresh;
+      
+      if LoadStringsFromFile(ProgressFile, Lines) then
+      begin
+        if GetArrayLength(Lines) > 0 then
+        begin
+          DecodeProgress(Lines[0], Pct, Msg);
+          WizardForm.ProgressGauge.Position := Pct;
+          WizardForm.StatusLabel.Caption := 'Status: ' + Msg + ' (' + IntToStr(Pct) + '%)';
+          
+          if Pct >= 100 then
+          begin
+            Finished := True;
+          end;
+        end;
+      end;
+      
+      TimeoutCount := TimeoutCount + 1;
+      // 8 minutes timeout (8 * 60 * 5 = 2400 loops)
+      if TimeoutCount > 2400 then
+      begin
+        Finished := True;
+      end;
+    end;
+  end;
+end;
+
 function GetUninstallString(): String;
 var
   sUnInstPath: String;
