@@ -88,6 +88,7 @@ self.addEventListener('push', event => {
     body: data.body,
     icon: '/logo192.png',
     badge: '/logo192.png',
+    sound: '/chime.wav',
     tag: 'active-task',
     pinned: true, // Keep notification pinned on lock-screen
     requireInteraction: !isSilent,
@@ -100,8 +101,21 @@ self.addEventListener('push', event => {
     ]
   };
 
+  // Broadcast sound playback command to active client tabs
+  const broadcastPromise = self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
+    clients.forEach(client => {
+      client.postMessage({
+        type: 'PLAY_CHIME',
+        silent: isSilent
+      });
+    });
+  });
+
   event.waitUntil(
-    self.registration.showNotification(data.title, options)
+    Promise.all([
+      self.registration.showNotification(data.title, options),
+      broadcastPromise
+    ])
   );
 });
 

@@ -30,7 +30,7 @@ logger = logging.getLogger("quantime.gateway")
 logging.basicConfig(level=logging.INFO)
 
 # Initialize FastAPI Application
-app = FastAPI(title="Quantime Gateway API", version="1.0")
+app = FastAPI(title="Quantime Gateway API", version="1.2.0")
 
 # Configure Cross-Origin Resource Sharing (CORS) for development UI access
 app.add_middleware(
@@ -1708,7 +1708,8 @@ async def check_and_send_notifications():
                             subscription_info=sub_info,
                             data=payload,
                             vapid_private_key=vapid_key,
-                            vapid_claims={"sub": "mailto:admin@quantime.app"}
+                            vapid_claims={"sub": "mailto:admin@quantime.app"},
+                            ttl=86400
                         )
                     except Exception as e:
                         logger.warning(f"Failed to deliver webpush to subscription: {e}")
@@ -1793,7 +1794,8 @@ def test_notifications():
                 subscription_info=sub_info,
                 data=payload_data,
                 vapid_private_key=vapid_key,
-                vapid_claims={"sub": "mailto:admin@quantime.app"}
+                vapid_claims={"sub": "mailto:admin@quantime.app"},
+                ttl=86400
             )
             success_count += 1
         except Exception as e:

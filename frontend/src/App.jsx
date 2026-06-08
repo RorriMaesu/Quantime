@@ -996,8 +996,16 @@ export default function App() {
     }
   };
 
+  const lastChimeRef = useRef(0);
+
   const playNotificationChime = () => {
     try {
+      const nowMs = Date.now();
+      if (nowMs - lastChimeRef.current < 15000) {
+        return; // Prevent duplicate chime playback within 15 seconds
+      }
+      lastChimeRef.current = nowMs;
+
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
       const now = ctx.currentTime;
       
@@ -1088,6 +1096,23 @@ export default function App() {
       subscribeToPushNotifications();
     }
   }, [notificationsEnabled]);
+
+  // Listen to messages from the Service Worker (e.g. to play chime sound on push notification receipt)
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      const handleServiceWorkerMessage = (event) => {
+        if (event.data && event.data.type === 'PLAY_CHIME') {
+          if (!event.data.silent) {
+            playNotificationChime();
+          }
+        }
+      };
+      navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage);
+      return () => {
+        navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage);
+      };
+    }
+  }, []);
 
 
   const triggerSync = async () => {
