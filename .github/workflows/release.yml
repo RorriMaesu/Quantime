@@ -19,7 +19,7 @@ jobs:
 
       - name: Install Inno Setup
         run: |
-          Invoke-WebRequest -Uri "http://files.jrsoftware.org/is/6/innosetup-6.3.3.exe" -OutFile "innosetup-setup.exe"
+          Invoke-WebRequest -Uri "https://files.jrsoftware.org/is/6/innosetup-6.3.3.exe" -OutFile "innosetup-setup.exe"
           Start-Process -FilePath "innosetup-setup.exe" -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -Wait
         shell: powershell
 
@@ -35,8 +35,7 @@ jobs:
         shell: powershell
 
       - name: Create Release & Upload Asset
-        uses: softprops/action-gh-release@v1
-        with:
-          files: dist/QuantimeSetup.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ github.ref_name }} dist/QuantimeSetup.exe --title "Release ${{ github.ref_name }}" --notes "Automated release build for version ${{ github.ref_name }}"
