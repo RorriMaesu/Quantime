@@ -4,7 +4,7 @@
 [Setup]
 AppId={{D37E618A-706E-45E4-A159-4E6DF9B53A04}}
 AppName=Quantime
-AppVersion=1.3.3
+AppVersion=1.3.4
 AppPublisher=RorriMaesu
 DefaultDirName={userpf}\Quantime
 DefaultGroupName=Quantime
@@ -39,7 +39,7 @@ type
     message: Cardinal;
     wParam: Longint;
     lParam: Longint;
-    time: DWORD;
+    time: Cardinal;
     pt: TWinPoint;
   end;
 
