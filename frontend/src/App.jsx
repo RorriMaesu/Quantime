@@ -180,11 +180,19 @@ export default function App() {
       clearInterval(recordIntervalRef.current);
       recordIntervalRef.current = null;
     }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
-    }
-    setIsCloningRecording(false);
-    setCloningStatus("idle");
+    
+    // Introduce a 600ms delay to allow final audio frames in buffers to be fully processed/encoded
+    setTimeout(() => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        try {
+          mediaRecorderRef.current.stop();
+        } catch (e) {
+          console.error("Failed to stop media recorder:", e);
+        }
+      }
+      setIsCloningRecording(false);
+      setCloningStatus("idle");
+    }, 600);
   };
 
   const submitVoiceClone = async () => {
