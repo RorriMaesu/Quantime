@@ -57,10 +57,10 @@ var
 begin
   if CurStep = ssPostInstall then
   begin
-    ProgressFile := ExpandConstant('{userprofile}\.quantime\install_progress.txt');
+    ProgressFile := ExpandConstant('{%USERPROFILE}\.quantime\install_progress.txt');
     
     // Ensure data folder and starting sentinel exists
-    ForceDirectories(ExpandConstant('{userprofile}\.quantime'));
+    ForceDirectories(ExpandConstant('{%USERPROFILE}\.quantime'));
     SaveStringToFile(ProgressFile, '0|Initializing setup wizard...', False);
     
     // Configure progress page settings
