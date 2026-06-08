@@ -19,12 +19,12 @@ PrivilegesRequired=admin
 Source: "*"; DestDir: "{app}"; Excludes: "backend\.venv,frontend\node_modules,quantime.db,backend\quantime.db,*chroma_db,backend\.env,dist,.git"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
-Name: "{group}\Quantime"; Filename: "{app}\run_quantime_hidden.vbs"
-Name: "{commondesktop}\Quantime"; Filename: "{app}\run_quantime_hidden.vbs"
+Name: "{group}\Quantime"; Filename: "{app}\backend\.venv\Scripts\pythonw.exe"; Parameters: """{app}\backend\tray_icon.py"""
+Name: "{commondesktop}\Quantime"; Filename: "{app}\backend\.venv\Scripts\pythonw.exe"; Parameters: """{app}\backend\tray_icon.py"""
 
 [Run]
 ; Launch Quantime post-install
-Filename: "wscript.exe"; Parameters: """{app}\run_quantime_hidden.vbs"""; Flags: postinstall nowait skipifsilent; Description: "Launch Quantime"
+Filename: "{app}\backend\.venv\Scripts\pythonw.exe"; Parameters: """{app}\backend\tray_icon.py"""; Flags: postinstall nowait skipifsilent; Description: "Launch Quantime"
 
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);
