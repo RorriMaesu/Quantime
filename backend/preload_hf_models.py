@@ -14,7 +14,18 @@ try:
     from kokoro import KPipeline
     print("Loading Kokoro-82M model...", flush=True)
     pipeline = KPipeline(lang_code='a')
-    print("Kokoro-82M model cached successfully.", flush=True)
+    
+    print("Pre-downloading Kokoro voice print files...", flush=True)
+    voices = ['af_heart', 'af_bella', 'af_nicole', 'am_adam', 'am_michael']
+    for v in voices:
+        print(f"Caching voice print: {v}...", flush=True)
+        try:
+            # Generate a tiny dummy snippet to force download/caching of the .pt voice print
+            list(pipeline("warmup", voice=v))
+        except Exception as ve:
+            print(f"Error caching voice print {v}: {ve}", flush=True)
+            
+    print("Kokoro-82M model and voice prints cached successfully.", flush=True)
 except Exception as e:
     print(f"Error caching Kokoro-82M: {e}", flush=True)
 
