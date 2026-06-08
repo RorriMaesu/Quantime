@@ -5,7 +5,8 @@ param(
     [switch]$Silent
 )
 
-$vbsPath = Join-Path $PSScriptRoot "run_quantime_hidden.vbs"
+$pythonwPath = Join-Path $PSScriptRoot "backend\.venv\Scripts\pythonw.exe"
+$scriptPath = Join-Path $PSScriptRoot "backend\tray_icon.py"
 $taskName = "QuantimeServer"
 
 Write-Host "==========================================================" -ForegroundColor Cyan
@@ -17,13 +18,17 @@ Write-Host "background whenever you log into Windows."
 Write-Host "This keeps the local scheduler and remote sync running headlessly."
 Write-Host ""
 
-if (-not (Test-Path $vbsPath)) {
-    Write-Error "Error: run_quantime_hidden.vbs not found in current folder!"
+if (-not (Test-Path $pythonwPath)) {
+    Write-Error "Error: pythonw.exe not found at $pythonwPath!"
+    exit 1
+}
+if (-not (Test-Path $scriptPath)) {
+    Write-Error "Error: tray_icon.py not found at $scriptPath!"
     exit 1
 }
 
 # Create Scheduled Task Action, Trigger, and Settings
-$action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$vbsPath`""
+$action = New-ScheduledTaskAction -Execute $pythonwPath -Argument "`"$scriptPath`""
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Days 365)
 
