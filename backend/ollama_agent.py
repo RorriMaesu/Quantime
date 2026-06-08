@@ -538,34 +538,52 @@ def create_task(title: str, start_time: str, end_time: str, description: str = "
         
     return {"status": "success", "task_id": tasks_to_insert[0][0], "message": f"Task '{title}' ({len(tasks_to_insert)} occurrences) created successfully."}
 
-def delete_task(task_id: str) -> Dict[str, Any]:
+def delete_task(task_id: str, target: str = "single") -> Dict[str, Any]:
     """
-    Deletes an existing task from SQLite.
+    Deletes an existing task or entire series from SQLite.
     """
     task_id = resolve_task_id(task_id)
-    logger.info(f"Ollama Agent executing: delete_task({task_id})")
+    logger.info(f"Ollama Agent executing: delete_task({task_id}, target={target})")
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT id, title FROM tasks WHERE id = ?", (task_id,))
+        cursor.execute("SELECT id, title, source_event_id, recurrence_group_id FROM tasks WHERE id = ?", (task_id,))
         row = cursor.fetchone()
         if not row:
             raise ValueError(f"Task with ID '{task_id}' not found.")
-        
-        cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
-        cursor.execute("DELETE FROM task_dependencies WHERE task_id = ? OR depends_on_task_id = ?", (task_id, task_id))
+            
+        tasks_to_delete = []
+        if target == "series" and row["recurrence_group_id"]:
+            cursor.execute("SELECT id, source_event_id FROM tasks WHERE recurrence_group_id = ?", (row["recurrence_group_id"],))
+            tasks_to_delete = [dict(r) for r in cursor.fetchall()]
+        elif target == "series" and row["source_event_id"]:
+            parent_id = row["source_event_id"].split('_')[0]
+            cursor.execute("SELECT id, source_event_id FROM tasks WHERE source_event_id LIKE ?", (f"{parent_id}%",))
+            tasks_to_delete = [dict(r) for r in cursor.fetchall()]
+            from backend.google_client import GoogleCalendarSync
+            GoogleCalendarSync.delete_calendar_event(parent_id)
+        else:
+            tasks_to_delete = [{"id": row["id"], "source_event_id": row["source_event_id"]}]
+            if row["source_event_id"]:
+                from backend.google_client import GoogleCalendarSync
+                GoogleCalendarSync.delete_calendar_event(row["source_event_id"])
+                
+        for t in tasks_to_delete:
+            cursor.execute("DELETE FROM tasks WHERE id = ?", (t["id"],))
+            cursor.execute("DELETE FROM task_dependencies WHERE task_id = ? OR depends_on_task_id = ?", (t["id"], t["id"]))
         conn.commit()
         
         # Mirror deletion to Firestore
         try:
             from backend.app import db_firestore, MOCK_USER_ID
             if db_firestore is not None:
-                task_ref = db_firestore.collection("users").document(MOCK_USER_ID).collection("tasks").document(task_id)
-                task_ref.delete()
+                for t in tasks_to_delete:
+                    task_ref = db_firestore.collection("users").document(MOCK_USER_ID).collection("tasks").document(t["id"])
+                    task_ref.delete()
         except Exception as fe:
             logger.error(f"Failed to mirror task deletion to Firestore: {fe}")
             
-        return {"status": "success", "message": f"Task '{row['title']}' (ID: {task_id}) deleted successfully."}
+        return {"status": "success", "message": f"Successfully deleted {len(tasks_to_delete)} task(s) for '{row['title']}'."}
     finally:
         conn.close()
 
@@ -1120,11 +1138,12 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "delete_task",
-            "description": "Delete/cancel an existing task by ID.",
+            "description": "Delete/cancel an existing task by ID or the entire recurring series.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "task_id": {"type": "string", "description": "The unique ID of the task to delete"}
+                    "task_id": {"type": "string", "description": "The unique ID of the task to delete"},
+                    "target": {"type": "string", "enum": ["single", "series"], "description": "Whether to delete just this single task occurrence ('single') or the entire routine series ('series'). Default is 'single'."}
                 },
                 "required": ["task_id"]
             }

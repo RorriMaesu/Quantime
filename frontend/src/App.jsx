@@ -111,6 +111,7 @@ export default function App() {
   const [recurrencePattern, setRecurrencePattern] = useState("none");
   const [isEditing, setIsEditing] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState(null);
+  const [editScope, setEditScope] = useState('single');
   const [recurringConfirm, setRecurringConfirm] = useState({ isOpen: false, taskId: null, actionType: 'delete', payload: null });
   const [recurrenceCount, setRecurrenceCount] = useState(10);
   const [apiKey, setApiKey] = useState(() => localStorage.getItem("quantime_api_key") || "");
@@ -1160,17 +1161,9 @@ export default function App() {
       };
       
       const currentTask = tasks.find(t => t.id === editingTaskId);
-      if (currentTask && (currentTask.recurrence_group_id || currentTask.source_event_id)) {
-        setRecurringConfirm({
-          isOpen: true,
-          taskId: editingTaskId,
-          actionType: 'edit',
-          payload: editObj
-        });
-        return;
-      }
-
-      await executeEditTask(editingTaskId, editObj, 'single');
+      const isRecurring = currentTask && (currentTask.recurrence_group_id || currentTask.source_event_id);
+      
+      await executeEditTask(editingTaskId, editObj, isRecurring ? editScope : 'single');
       return;
     }
 
@@ -1256,6 +1249,7 @@ export default function App() {
     setNewEnergy(task.energy_level || "none");
     setNewConstraint(task.constraint_type || "soft");
     setRecurrencePattern("none");
+    setEditScope('single');
     setShowAddForm(true);
   };
   
@@ -3123,7 +3117,41 @@ export default function App() {
                       />
                     </div>
                   )}
-                </div>
+              {isEditing && (
+                (() => {
+                  const currentTask = tasks.find(t => t.id === editingTaskId);
+                  const isRecurring = currentTask && (currentTask.recurrence_group_id || currentTask.source_event_id);
+                  if (!isRecurring) return null;
+                  return (
+                    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-2.5">
+                      <label className="block text-[10px] text-gray-400 font-bold uppercase tracking-wider">Scope of Changes</label>
+                      <div className="flex space-x-3">
+                        <button
+                          type="button"
+                          onClick={() => setEditScope('single')}
+                          className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold border transition-all ${
+                            editScope === 'single'
+                              ? 'bg-indigo-600/20 border-indigo-500 text-indigo-300'
+                              : 'bg-gray-950 border-gray-800 text-gray-400 hover:text-gray-250'
+                          }`}
+                        >
+                          This Occurrence Only
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditScope('series')}
+                          className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold border transition-all ${
+                            editScope === 'series'
+                              ? 'bg-indigo-600/20 border-indigo-500 text-indigo-300'
+                              : 'bg-gray-950 border-gray-800 text-gray-400 hover:text-gray-250'
+                          }`}
+                        >
+                          Entire Routine Series
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()
               )}
             </div>
 
@@ -3135,6 +3163,30 @@ export default function App() {
               >
                 Cancel
               </button>
+              {isEditing && (
+                <button 
+                  type="button" 
+                  onClick={async () => {
+                    const currentTask = tasks.find(t => t.id === editingTaskId);
+                    if (!currentTask) return;
+                    const isRecurring = currentTask.recurrence_group_id || currentTask.source_event_id;
+                    if (isRecurring) {
+                      if (window.confirm(`Are you sure you want to delete this ${editScope === 'series' ? 'entire recurring series' : 'occurrence'}?`)) {
+                        setShowAddForm(false);
+                        await executeDeleteTask(editingTaskId, editScope);
+                      }
+                    } else {
+                      if (window.confirm(`Are you sure you want to delete "${currentTask.title}"?`)) {
+                        setShowAddForm(false);
+                        await executeDeleteTask(editingTaskId, 'single');
+                      }
+                    }
+                  }}
+                  className="flex-1 py-3 rounded-xl text-xs font-semibold bg-red-650 hover:bg-red-600 text-white border border-red-800/40"
+                >
+                  Delete Task
+                </button>
+              )}
               <button 
                 type="submit" 
                 className="flex-1 py-3 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white"
