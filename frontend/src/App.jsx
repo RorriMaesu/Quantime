@@ -109,6 +109,19 @@ export default function App() {
   const [showVoiceCloningDrawer, setShowVoiceCloningDrawer] = useState(false);
   const [isCloningRecording, setIsCloningRecording] = useState(false);
   const [cloningAudioBlob, setCloningAudioBlob] = useState(null);
+  const [cloningAudioUrl, setCloningAudioUrl] = useState(null);
+
+  useEffect(() => {
+    if (cloningAudioBlob) {
+      const url = URL.createObjectURL(cloningAudioBlob);
+      setCloningAudioUrl(url);
+      return () => {
+        URL.revokeObjectURL(url);
+      };
+    } else {
+      setCloningAudioUrl(null);
+    }
+  }, [cloningAudioBlob]);
   const [cloningRecordSeconds, setCloningRecordSeconds] = useState(0);
   const [cloningStatus, setCloningStatus] = useState("idle"); // 'idle', 'recording', 'uploading', 'success', 'error'
   const [cloningError, setCloningError] = useState("");
@@ -3163,7 +3176,7 @@ export default function App() {
                 <div className="bg-gray-955 border border-gray-805 rounded-2xl p-3 flex flex-col items-center space-y-2">
                   <span className="text-[10px] font-bold text-gray-450 uppercase tracking-wider">Audio Playback Preview</span>
                   <audio 
-                    src={URL.createObjectURL(cloningAudioBlob)} 
+                    src={cloningAudioUrl} 
                     controls 
                     className="w-full h-8 max-w-xs accent-indigo-500" 
                   />
