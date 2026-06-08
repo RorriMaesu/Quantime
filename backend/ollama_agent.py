@@ -1200,10 +1200,17 @@ Behavioral Guidelines & Rules:
 8. **Conversational & Proactive**: Give clear summaries of actions you took, highlight what tools you executed, explain why you restructured the schedule, and outline any proposed adjustments clearly to the user.
 9. **No Scheduling in the Past**: You must NEVER create new tasks or modify existing tasks to start in the past relative to the current date-time context. Always verify the current time before choosing task time slots.
 10. **Calendar Date Math**: You must NEVER guess or calculate the day of the week for a specific calendar date yourself. If the user asks about a day of the week, a holiday, or asks you to perform calendar math (e.g. "what day is July 6th?", "what day is next Friday?", "what day is October 24th?"), you MUST call the `get_day_of_week` tool to compute the correct date and weekday.
-11. **Recurring Tasks**: When a user requests a repeating or recurring task (e.g. 'Piano lesson every Friday at 4pm for 5 weeks'), parse the frequency (e.g. `weekly`) and count (e.g. `5`), and call `create_task` with the appropriate `recurrence_pattern` and `recurrence_count` arguments. The backend will automatically generate the instances.
+11. **Recurring Tasks & Complex Patterns**:
+   - For simple recurring events (e.g. 'Piano lesson every Friday at 4pm for 5 weeks'), call `create_task` with the appropriate `recurrence_pattern` and `recurrence_count`.
+   - For complex recurring requests containing exclusions or specific combinations (e.g. 'daily except Tuesdays', 'every weekday', 'every Monday, Wednesday, and Friday'), do NOT use the generic `recurrence_pattern`. Instead, resolve the target dates manually using the 14-day calendar reference map or by executing `get_day_of_week`, and make multiple `create_task` tool calls in parallel (one for each eligible day, setting `recurrence_pattern="none"`) to create them precisely.
+12. **Circadian Brainstorming & Schedule Optimization**:
+   - Proactively brainstorm efficiency improvements with the user.
+   - When asked to optimize or review their day or schedule, compare their scheduled tasks against their circadian peaks and low-efficiency slumps (`get_circadian_profile`).
+   - If a high-energy task (such as study or deep work) is placed in a low-efficiency slump, or a low-energy task (such as admin or reading) is placed in a peak hour, point it out and suggest reorganizing it.
+   - Offer to run rescheduling for them or walk them through option proposals. Offer practical time management techniques (e.g. task bundling, Pomodoro blocks, or regular breaks).
 """
 
-def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], audio_b64: Optional[str] = None) -> Generator[Tuple[str, str], None, None]:
+def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], audio_b64: Optional[str] = None, selected_date: Optional[str] = None, current_time: Optional[str] = None) -> Generator[Tuple[str, str], None, None]:
     """
     Communicates with local Ollama API, streaming output tokens.
     Appends '<|think|>' token to prompt to force deep-reasoning mode.
@@ -1218,8 +1225,37 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], 
     tz_suffix = f"{tz_offset[:3]}:{tz_offset[3:]}"
     current_time_str = time.strftime("%A, %B %d, %Y, %I:%M %p %Z")
     
+    if current_time:
+        try:
+            dt = datetime.datetime.fromisoformat(current_time.replace('Z', '+00:00'))
+            current_time_str = dt.strftime("%A, %B %d, %Y, %I:%M %p %Z")
+            tz_offset = dt.strftime('%z')
+            if not tz_offset or len(tz_offset) < 5:
+                tz_offset = "+0000"
+            tz_formatted = f"UTC{tz_offset[:3]}:{tz_offset[3:]}"
+            tz_suffix = f"{tz_offset[:3]}:{tz_offset[3:]}"
+        except Exception as ex:
+            logger.error(f"Failed to parse current_time parameter: {ex}")
+            
+    selected_date_context = ""
+    if selected_date:
+        try:
+            s_dt = datetime.datetime.fromisoformat(selected_date.replace('Z', '+00:00'))
+            selected_date_str = s_dt.strftime("%A, %B %d, %Y")
+            selected_date_context = (
+                f"- USER'S CURRENT PLANNER VIEW: The user is currently viewing/focusing on **{selected_date_str}** in their dashboard planner UI.\n"
+                f"- Actionable Target Day: If the user says 'today', 'this day', or asks to add/edit/optimize tasks without specifying a date, they refer to this selected view day ({selected_date_str}). Feel free to inspect, query, or edit this day using your tools.\n"
+            )
+        except Exception as ex:
+            logger.error(f"Failed to parse selected_date parameter: {ex}")
+
     calendar_ref = []
     base_date = datetime.datetime.now()
+    if current_time:
+        try:
+            base_date = datetime.datetime.fromisoformat(current_time.replace('Z', '+00:00'))
+        except Exception:
+            pass
     for i in range(14):
         d = base_date + datetime.timedelta(days=i)
         day_str = d.strftime("%A, %B %d, %Y")
@@ -1236,6 +1272,7 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], 
         f"\n\nCURRENT DATE-TIME CONTEXT:\n"
         f"- Today's date and time: {current_time_str} ({tz_formatted})\n"
         f"- User Timezone: {tz_formatted}\n"
+        f"{selected_date_context}"
         f"- Ensure all new tasks created use the correct year, month, and day matching the current context unless a future date is explicitly requested.\n"
         f"- Timezone Guideline: You MUST specify task start_time and end_time ISO strings using the same timezone offset suffix as the user's timezone ({tz_suffix}) instead of defaulting to UTC 'Z' (unless the user's timezone is UTC itself). This ensures scheduled blocks appear at the correct local hour on the user's timeline interface.\n"
         f"\nCALENDAR REFERENCE LOOKUP MAP (NEXT 14 DAYS):\n"

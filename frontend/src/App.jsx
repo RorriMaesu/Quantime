@@ -21,6 +21,7 @@ import {
   Trash2,
   Eraser,
   Settings,
+  Edit,
   Mic,
   MicOff,
   Volume2,
@@ -108,6 +109,8 @@ export default function App() {
   const [newEnergy, setNewEnergy] = useState("none");
   const [newConstraint, setNewConstraint] = useState("soft");
   const [recurrencePattern, setRecurrencePattern] = useState("none");
+  const [isEditing, setIsEditing] = useState(false);
+  const [editingTaskId, setEditingTaskId] = useState(null);
   const [recurrenceCount, setRecurrenceCount] = useState(10);
   const [apiKey, setApiKey] = useState(() => localStorage.getItem("quantime_api_key") || "");
   const [viewMode, setViewMode] = useState("timeline"); // timeline or calendar
@@ -1145,6 +1148,39 @@ export default function App() {
     e.preventDefault();
     if (!newTitle || !newStart || !newEnd) return;
 
+    if (isEditing && editingTaskId) {
+      const editObj = {
+        title: newTitle,
+        description: newDesc,
+        start_time: new Date(newStart).toISOString(),
+        end_time: new Date(newEnd).toISOString(),
+        energy_level: newEnergy,
+        constraint_type: newConstraint
+      };
+      try {
+        const resp = await fetch(`${API_BASE}/api/tasks/${editingTaskId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(editObj)
+        });
+        if (resp.ok) {
+          setNewTitle("");
+          setNewDesc("");
+          setNewStart("");
+          setNewEnd("");
+          setNewEnergy("none");
+          setNewConstraint("soft");
+          setIsEditing(false);
+          setEditingTaskId(null);
+          setShowAddForm(false);
+          fetchTasks();
+        }
+      } catch (e) {
+        console.error("Failed to edit task", e);
+      }
+      return;
+    }
+
     const taskObj = {
       id: `task_${Date.now()}`,
       title: newTitle,
@@ -1180,6 +1216,32 @@ export default function App() {
       console.error("Failed to add task", e);
     }
   };
+
+  const toLocalDatetimeString = (isoString) => {
+    try {
+      if (!isoString) return "";
+      const date = new Date(isoString);
+      const tzOffset = date.getTimezoneOffset() * 60000;
+      const localISOTime = (new Date(date.getTime() - tzOffset)).toISOString().slice(0, 16);
+      return localISOTime;
+    } catch {
+      return "";
+    }
+  };
+
+  const handleEditTaskClick = (task) => {
+    setIsEditing(true);
+    setEditingTaskId(task.id);
+    setNewTitle(task.title || "");
+    setNewDesc(task.description || "");
+    setNewStart(toLocalDatetimeString(task.start_time));
+    setNewEnd(toLocalDatetimeString(task.end_time));
+    setNewEnergy(task.energy_level || "none");
+    setNewConstraint(task.constraint_type || "soft");
+    setRecurrencePattern("none");
+    setShowAddForm(true);
+  };
+  
 
   const handleDeleteTask = async (taskId) => {
     const task = tasks.find(t => t.id === taskId);
@@ -1362,7 +1424,7 @@ export default function App() {
 
   const fallbackRESTSync = async (userMsg, agentMsgId) => {
     try {
-      const resp = await fetch(`${API_BASE}/api/chats?prompt=${encodeURIComponent(userMsg.text)}`, {
+      const resp = await fetch(`${API_BASE}/api/chats?prompt=${encodeURIComponent(userMsg.text)}&selected_date=${encodeURIComponent(selectedDate.toISOString())}&current_time=${encodeURIComponent(new Date().toISOString())}`, {
         method: 'POST'
       });
       
@@ -2250,7 +2312,18 @@ export default function App() {
               </div>
 
               <button 
-                onClick={() => setShowAddForm(true)}
+                onClick={() => {
+                  setIsEditing(false);
+                  setEditingTaskId(null);
+                  setNewTitle("");
+                  setNewDesc("");
+                  setNewStart("");
+                  setNewEnd("");
+                  setNewEnergy("none");
+                  setNewConstraint("soft");
+                  setRecurrencePattern("none");
+                  setShowAddForm(true);
+                }}
                 className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-indigo-950 text-indigo-300 border border-indigo-900 hover:bg-indigo-900 transition-all flex items-center space-x-1 shadow-inner focus:outline-none"
               >
                 <Plus className="h-3.5 w-3.5" />
@@ -2533,6 +2606,14 @@ export default function App() {
                           }`}>
                             {task.constraint_type.toUpperCase()}
                           </span>
+                          <button 
+                            type="button"
+                            onClick={() => handleEditTaskClick(task)}
+                            className="p-1 rounded text-gray-500 hover:text-indigo-400 hover:bg-gray-800/60 transition-all focus:outline-none"
+                            title="Edit Task"
+                          >
+                            <Edit className="h-3.5 w-3.5" />
+                          </button>
                           <button 
                             type="button"
                             onClick={() => handleDeleteTask(task.id)}
@@ -2851,24 +2932,24 @@ export default function App() {
         </button>
       </div>
 
-      {/* BOTTOM SHEET ADD TASK MODAL (Mobile-first slide up bottom sheet) */}
+      {/* DIALOG ADD/EDIT TASK MODAL */}
       {showAddForm && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           {/* Backdrop dim overlay */}
           <div 
             onClick={() => setShowAddForm(false)}
             className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
           ></div>
           
-          {/* Slide up sheet */}
+          {/* Float-centered dialog */}
           <form 
             onSubmit={handleAddTask} 
-            className="relative w-full max-w-xl bg-gray-950 border-t border-gray-800 rounded-t-3xl p-6 pb-8 space-y-4 shadow-2xl animate-slide z-10 max-h-[85vh] overflow-y-auto"
+            className="relative w-full max-w-xl bg-gray-950 border border-gray-800 rounded-3xl p-6 md:p-8 space-y-4 shadow-2xl z-10 max-h-[90vh] overflow-y-auto"
           >
             <div className="flex justify-between items-center pb-2 border-b border-gray-900">
               <h3 className="text-base font-bold text-gray-100 flex items-center space-x-2">
-                <Plus className="h-5 w-5 text-indigo-400" />
-                <span>Create Schedule Task</span>
+                {isEditing ? <Edit className="h-5 w-5 text-indigo-400" /> : <Plus className="h-5 w-5 text-indigo-400" />}
+                <span>{isEditing ? "Edit Schedule Task" : "Create Schedule Task"}</span>
               </h3>
               <button 
                 type="button"
@@ -2878,6 +2959,42 @@ export default function App() {
                 Done
               </button>
             </div>
+
+            {!isEditing && (
+              <div className="space-y-1.5 pb-2 border-b border-gray-900/60">
+                <label className="block text-[10px] text-gray-405 font-bold uppercase tracking-wider mb-1">Quick Templates</label>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { title: "Cook Dinner", duration: 60, energy: "none", desc: "Prep ingredients and cook dinner" },
+                    { title: "Deep Work / Study", duration: 120, energy: "crimson", desc: "Focused study or coding session" },
+                    { title: "Gym Workout", duration: 60, energy: "crimson", desc: "Strength training or cardio session" },
+                    { title: "Email & Admin", duration: 30, energy: "teal", desc: "Process inbox and administrative chores" },
+                    { title: "Morning Meditation", duration: 15, energy: "teal", desc: "Mindfulness breathing and reflection" }
+                  ].map((tpl, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        setNewTitle(tpl.title);
+                        setNewDesc(tpl.desc);
+                        setNewEnergy(tpl.energy);
+                        
+                        // Set start time to today/selected date at nearest hour, end time to start + duration
+                        const start = new Date(selectedDate);
+                        const now = new Date();
+                        start.setHours(now.getHours() + 1, 0, 0, 0);
+                        const end = new Date(start.getTime() + tpl.duration * 60000);
+                        setNewStart(toLocalDatetimeString(start.toISOString()));
+                        setNewEnd(toLocalDatetimeString(end.toISOString()));
+                      }}
+                      className="bg-gray-900 border border-gray-800 hover:border-indigo-500 hover:bg-gray-850/80 text-[10px] text-gray-300 font-medium px-2.5 py-1.5 rounded-full transition-all"
+                    >
+                      {tpl.title} ({tpl.duration}m)
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="space-y-4">
               <div>
@@ -2952,35 +3069,37 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] text-gray-400 mb-1 font-semibold">Recurrence Frequency</label>
-                  <select 
-                    value={recurrencePattern}
-                    onChange={(e) => setRecurrencePattern(e.target.value)}
-                    className="w-full bg-gray-900 border border-gray-800 rounded-xl p-3 text-xs text-gray-100 focus:outline-none"
-                  >
-                    <option value="none">Does not repeat</option>
-                    <option value="daily">Daily</option>
-                    <option value="weekly">Weekly</option>
-                    <option value="monthly">Monthly</option>
-                  </select>
-                </div>
-                {recurrencePattern !== 'none' && (
+              {!isEditing && (
+                <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-[10px] text-gray-400 mb-1 font-semibold">Occurrences Count</label>
-                    <input 
-                      type="number"
-                      min="1"
-                      max="100"
-                      value={recurrenceCount}
-                      onChange={(e) => setRecurrenceCount(e.target.value)}
-                      className="w-full bg-gray-900 border border-gray-800 rounded-xl p-3 text-xs text-gray-100 focus:outline-none focus:border-indigo-500"
-                      required
-                    />
+                    <label className="block text-[10px] text-gray-400 mb-1 font-semibold">Recurrence Frequency</label>
+                    <select 
+                      value={recurrencePattern}
+                      onChange={(e) => setRecurrencePattern(e.target.value)}
+                      className="w-full bg-gray-900 border border-gray-800 rounded-xl p-3 text-xs text-gray-100 focus:outline-none"
+                    >
+                      <option value="none">Does not repeat</option>
+                      <option value="daily">Daily</option>
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                    </select>
                   </div>
-                )}
-              </div>
+                  {recurrencePattern !== 'none' && (
+                    <div>
+                      <label className="block text-[10px] text-gray-400 mb-1 font-semibold">Occurrences Count</label>
+                      <input 
+                        type="number"
+                        min="1"
+                        max="100"
+                        value={recurrenceCount}
+                        onChange={(e) => setRecurrenceCount(e.target.value)}
+                        className="w-full bg-gray-900 border border-gray-800 rounded-xl p-3 text-xs text-gray-100 focus:outline-none focus:border-indigo-500"
+                        required
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="flex space-x-3 pt-2">

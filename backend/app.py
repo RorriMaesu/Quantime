@@ -156,7 +156,7 @@ def get_localtunnel_url() -> Optional[str]:
     return None
 
 # Initialize FastAPI Application
-app = FastAPI(title="Quantime Gateway API", version="1.2.0")
+app = FastAPI(title="Quantime Gateway API", version="1.3.13")
 
 # Configure Cross-Origin Resource Sharing (CORS) for development UI access
 origins = [
@@ -414,7 +414,7 @@ def get_recent_chat_history(limit: int = 10, exclude_chat_id: Optional[str] = No
     finally:
         conn.close()
 
-async def handle_agent_processing(chat_id: str, prompt: str, chat_history: List[Dict[str, str]], doc_ref) -> None:
+async def handle_agent_processing(chat_id: str, prompt: str, chat_history: List[Dict[str, str]], doc_ref, selected_date: Optional[str] = None, current_time: Optional[str] = None) -> None:
     """
     Orchestration loop that calls the speculative reasoning agent,
     buffering stream chunks to respect Circuit Breaker thresholds.
@@ -437,7 +437,7 @@ async def handle_agent_processing(chat_id: str, prompt: str, chat_history: List[
         update_firestore_document(doc_ref, {"status": "processing"}, force=True)
     
     # Run Ollama streaming response loop
-    for channel, chunk in generate_agent_stream(prompt, chat_history):
+    for channel, chunk in generate_agent_stream(prompt, chat_history, selected_date=selected_date, current_time=current_time):
         if channel == "thought":
             thoughts_buf += chunk
         elif channel == "text":
@@ -574,6 +574,9 @@ class TaskUpdateSchema(BaseModel):
     title: Optional[str] = None
     start_time: Optional[str] = None
     end_time: Optional[str] = None
+    description: Optional[str] = None
+    energy_level: Optional[str] = None
+    constraint_type: Optional[str] = None
 
 @app.get("/health")
 def health_check():
@@ -1358,6 +1361,15 @@ def update_task_endpoint(task_id: str, payload: TaskUpdateSchema, target: str = 
             if payload.title is not None:
                 update_fields.append("title = ?")
                 params.append(payload.title)
+            if payload.description is not None:
+                update_fields.append("description = ?")
+                params.append(payload.description)
+            if payload.energy_level is not None:
+                update_fields.append("energy_level = ?")
+                params.append(payload.energy_level)
+            if payload.constraint_type is not None:
+                update_fields.append("constraint_type = ?")
+                params.append(payload.constraint_type)
                 
             if target == "single":
                 if payload.start_time is not None:
@@ -1590,7 +1602,7 @@ def list_chats():
         conn.close()
 
 @app.post("/api/chats")
-def handle_chat_message(prompt: str, background_tasks: BackgroundTasks):
+def handle_chat_message(prompt: str, background_tasks: BackgroundTasks, selected_date: Optional[str] = None, current_time: Optional[str] = None):
     """Unified chat message endpoint. Commits user message to local database and spawns agentic processing thread."""
     chat_id = f"chat_{int(time.time() * 1000)}"
     
@@ -1603,7 +1615,9 @@ def handle_chat_message(prompt: str, background_tasks: BackgroundTasks):
         chat_id,
         prompt,
         [],
-        None
+        None,
+        selected_date,
+        current_time
     )
     return {"status": "processing", "chat_id": chat_id}
 
