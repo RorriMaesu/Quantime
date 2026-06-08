@@ -1,5 +1,36 @@
 # backend/voice_processor.py
 import os
+import platform
+import logging
+
+logger = logging.getLogger("quantime.voice_processor")
+
+# On Windows, when run under background environments (like Task Scheduler/VBScript),
+# user environment variables (such as custom HF_HOME or OLLAMA_MODELS) may be missing.
+# We restore them directly from the registry to ensure offline caches are resolved correctly.
+if platform.system() == "Windows":
+    try:
+        import winreg
+        for hkey, subkey in [
+            (winreg.HKEY_CURRENT_USER, "Environment"),
+            (winreg.HKEY_LOCAL_MACHINE, r"System\CurrentControlSet\Control\Session Manager\Environment")
+        ]:
+            try:
+                with winreg.OpenKey(hkey, subkey, 0, winreg.KEY_READ) as key:
+                    i = 0
+                    while True:
+                        name, value, val_type = winreg.EnumValue(key, i)
+                        if name in ("HF_HOME", "HF_HUB_CACHE", "OLLAMA_MODELS"):
+                            if name not in os.environ:
+                                expanded_value = os.path.expandvars(str(value))
+                                os.environ[name] = expanded_value
+                                logger.info(f"Restored registry env: {name}={expanded_value}")
+                        i += 1
+            except OSError:
+                pass
+    except Exception as e:
+        logger.warning(f"Failed to load user environment registry: {e}")
+
 os.environ["HF_HUB_OFFLINE"] = "1"
 
 import io
@@ -8,7 +39,6 @@ import logging
 import numpy as np
 import sys
 
-logger = logging.getLogger("quantime.voice_processor")
 
 # Lazy-loaded TTS Pipelines to prevent boot-up delays
 _kokoro_pipeline = None
