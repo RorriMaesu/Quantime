@@ -416,8 +416,10 @@ export default function App() {
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && !isPlayingRef.current && !activeAudioSourceRef.current) {
         let delay = 100;
         if (lastErrorType === "network") {
-          delay = 3000; // Backoff to avoid rate limits
-          console.log("SpeechRecognition: Network error cooldown. Restarting in 3000ms...");
+          console.log("SpeechRecognition: Network error. Falling back entirely to backend PCM audio streaming STT.");
+          setVoiceError("");
+          lastErrorType = null;
+          return;
         } else if (lastErrorType === "no-speech") {
           delay = 500;
         }
