@@ -23,7 +23,18 @@ logger = logging.getLogger("quantime.google_client")
 logging.basicConfig(level=logging.INFO)
 
 # Config files (Expected locally)
-CREDENTIALS_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "credentials.json"))
+_data_dir = os.path.join(os.path.expanduser("~"), ".quantime")
+os.makedirs(_data_dir, exist_ok=True)
+CREDENTIALS_FILE = os.path.abspath(os.path.join(_data_dir, "credentials.json"))
+
+# Migration helper: copy credentials.json if it exists locally but not in home directory
+_local_creds = os.path.abspath(os.path.join(os.path.dirname(__file__), "credentials.json"))
+if not os.path.exists(CREDENTIALS_FILE) and os.path.exists(_local_creds):
+    import shutil
+    try:
+        shutil.copy(_local_creds, CREDENTIALS_FILE)
+    except Exception:
+        pass
 SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/gmail.readonly",

@@ -5,7 +5,18 @@ import sqlite3
 import threading
 from typing import Dict, Any, List, Optional
 
-DB_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "quantime.db"))
+_data_dir = os.path.join(os.path.expanduser("~"), ".quantime")
+os.makedirs(_data_dir, exist_ok=True)
+DB_FILE = os.path.abspath(os.path.join(_data_dir, "quantime.db"))
+
+# Migration helper: copy existing database to new location if it exists
+_local_db = os.path.abspath(os.path.join(os.path.dirname(__file__), "quantime.db"))
+if not os.path.exists(DB_FILE) and os.path.exists(_local_db):
+    import shutil
+    try:
+        shutil.copy(_local_db, DB_FILE)
+    except Exception:
+        pass
 
 class FirestoreThrottlingException(Exception):
     """Raised when Firestore write rates exceed limits to preserve the free Spark tier."""

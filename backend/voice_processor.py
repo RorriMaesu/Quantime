@@ -220,7 +220,8 @@ def synthesize_text_to_pcm(text: str, voice: str = 'af_heart') -> bytes:
                 
                 device = next(model.parameters()).device
                 
-                preset_path = os.path.join(os.path.dirname(__file__), "user_voice_ref.pt")
+                _data_dir = os.path.join(os.path.expanduser("~"), ".quantime")
+                preset_path = os.path.join(_data_dir, "user_voice_ref.pt")
                 if not os.path.exists(preset_path):
                     logger.warning(f"Custom preset {preset_path} not found. Synthesizing using default Carter preset.")
                     preset_path = os.path.join(os.path.dirname(__file__), "vibevoice_src", "demo", "voices", "streaming_model", "en-Carter_man.pt")

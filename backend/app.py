@@ -481,15 +481,17 @@ import shutil
 async def voice_clone_endpoint(file: UploadFile = File(...)):
     """Accepts a WAV audio file, saves it, and compiles it into a VibeVoice speaker preset."""
     try:
-        # Create user_voice_ref.wav in backend folder
-        wav_path = os.path.join(os.path.dirname(__file__), "user_voice_ref.wav")
+        # Create user_voice_ref.wav in user home folder
+        _data_dir = os.path.join(os.path.expanduser("~"), ".quantime")
+        os.makedirs(_data_dir, exist_ok=True)
+        wav_path = os.path.join(_data_dir, "user_voice_ref.wav")
         with open(wav_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
         logger.info(f"Saved custom reference WAV to {wav_path}")
         
         # Compile preset
-        preset_out_path = os.path.join(os.path.dirname(__file__), "user_voice_ref.pt")
+        preset_out_path = os.path.join(_data_dir, "user_voice_ref.pt")
         from voice_processor import generate_voice_preset
         generate_voice_preset(wav_path, preset_out_path)
         

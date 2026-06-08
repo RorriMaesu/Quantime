@@ -107,6 +107,9 @@ def check_and_start_ollama():
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(base_dir)
 
+log_dir = os.path.join(os.path.expanduser("~"), ".quantime")
+os.makedirs(log_dir, exist_ok=True)
+
 fastapi_proc = None
 vite_proc = None
 tunnel_proc = None
@@ -168,7 +171,7 @@ def start_services():
     if not os.path.exists(pythonw_exe):
         pythonw_exe = "pythonw.exe"
         
-    fastapi_log_path = os.path.join(base_dir, "backend", "fastapi.log")
+    fastapi_log_path = os.path.join(log_dir, "fastapi.log")
     try:
         log_file = open(fastapi_log_path, "a")
     except Exception:
@@ -194,7 +197,7 @@ def start_services():
         vite_js = os.path.join(base_dir, "frontend", "node_modules", "vite", "bin", "vite.js")
         
         # 3. Start Vite frontend
-        vite_log_path = os.path.join(base_dir, "frontend", "vite.log")
+        vite_log_path = os.path.join(log_dir, "vite.log")
         try:
             vite_log = open(vite_log_path, "a")
         except Exception:
@@ -215,7 +218,7 @@ def start_services():
         
     # 4. Start Localtunnel gateway
     if os.path.exists(lt_js):
-        tunnel_log_path = os.path.join(base_dir, "frontend", "localtunnel.log")
+        tunnel_log_path = os.path.join(log_dir, "localtunnel.log")
         try:
             tunnel_log = open(tunnel_log_path, "a")
         except Exception:
@@ -316,7 +319,7 @@ def monitor_localtunnel():
             node_bin = find_node()
             lt_js = os.path.join(base_dir, "frontend", "node_modules", "localtunnel", "bin", "lt.js")
             if os.path.exists(lt_js):
-                tunnel_log_path = os.path.join(base_dir, "frontend", "localtunnel.log")
+                tunnel_log_path = os.path.join(log_dir, "localtunnel.log")
                 try:
                     tunnel_log = open(tunnel_log_path, "a")
                 except Exception:
