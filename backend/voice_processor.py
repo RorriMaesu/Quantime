@@ -51,7 +51,18 @@ def get_tts_pipeline():
         try:
             from kokoro import KPipeline
             logger.info("Initializing Kokoro-82M TTS Pipeline...")
-            _kokoro_pipeline = KPipeline(lang_code='a') # 'a' for American English
+            try:
+                _kokoro_pipeline = KPipeline(lang_code='a') # 'a' for American English
+            except Exception as e:
+                logger.info(f"Kokoro not found in local cache ({e}). Attempting online download...")
+                old_offline = os.environ.get("HF_HUB_OFFLINE")
+                if old_offline:
+                    del os.environ["HF_HUB_OFFLINE"]
+                try:
+                    _kokoro_pipeline = KPipeline(lang_code='a')
+                finally:
+                    if old_offline:
+                        os.environ["HF_HUB_OFFLINE"] = old_offline
             logger.info("Kokoro TTS Pipeline loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to load Kokoro-82M TTS: {e}. Falling back to mock TTS.")
