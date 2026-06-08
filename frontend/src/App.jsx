@@ -657,6 +657,7 @@ export default function App() {
   }, []);
 
   const chatEndRef = useRef(null);
+  const fetchTasksAbortControllerRef = useRef(null);
 
   const getDaysForOffsetWeek = (offset) => {
     const today = new Date();
@@ -740,6 +741,12 @@ export default function App() {
 
   // Poll database tasks and chats with dynamic month bounds
   const fetchTasks = async (currentDate = visibleDate) => {
+    if (fetchTasksAbortControllerRef.current) {
+      fetchTasksAbortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    fetchTasksAbortControllerRef.current = controller;
+
     try {
       const year = currentDate.getFullYear();
       const month = currentDate.getMonth();
@@ -748,21 +755,35 @@ export default function App() {
       const startIso = new Date(Date.UTC(year, month, 1 - 2, 0, 0, 0)).toISOString();
       const endIso = new Date(Date.UTC(year, month + 1, 0 + 2, 23, 59, 59)).toISOString();
       
-      const resp = await fetch(`${API_BASE}/api/tasks?start_date=${startIso}&end_date=${endIso}&_t=${Date.now()}`);
+      const resp = await fetch(`${API_BASE}/api/tasks?start_date=${startIso}&end_date=${endIso}&_t=${Date.now()}`, {
+        signal: controller.signal
+      });
       if (resp.ok) {
         const data = await resp.json();
         const sorted = data.tasks.sort((a, b) => parseTaskDate(a.start_time) - parseTaskDate(b.start_time));
         setTasks(sorted);
       }
     } catch (e) {
+      if (e.name === 'AbortError') {
+        return; // Ignore clean client-side aborts
+      }
       console.error("Failed to fetch tasks", e);
+    } finally {
+      if (fetchTasksAbortControllerRef.current === controller) {
+        fetchTasksAbortControllerRef.current = null;
+      }
     }
   };
 
   useEffect(() => {
     fetchTasks(visibleDate);
     const interval = setInterval(() => fetchTasks(visibleDate), 4000); 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      if (fetchTasksAbortControllerRef.current) {
+        fetchTasksAbortControllerRef.current.abort();
+      }
+    };
   }, [visibleDate]);
 
   useEffect(() => {

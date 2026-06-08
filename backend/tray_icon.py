@@ -161,7 +161,7 @@ def start_services():
         log_file = subprocess.DEVNULL
         
     fastapi_proc = subprocess.Popen(
-        [pythonw_exe, "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"],
+        [pythonw_exe, "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "30"],
         cwd=os.path.join(base_dir, "backend"),
         creationflags=creation_flags,
         stdout=log_file,

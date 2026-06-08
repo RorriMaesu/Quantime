@@ -184,7 +184,7 @@ Write-Header "Concurrent Server Launch"
 
 # Spin up FastAPI Backend Server
 Write-Info "Launching FastAPI Gateway on http://localhost:8000..."
-Start-Process -FilePath "backend/.venv/Scripts/uvicorn" -ArgumentList "app:app --host 0.0.0.0 --port 8000" -WorkingDirectory "backend" -WindowStyle Minimized
+Start-Process -FilePath "backend/.venv/Scripts/uvicorn" -ArgumentList "app:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 30" -WorkingDirectory "backend" -WindowStyle Minimized
 
 # Spin up Vite Frontend Dev Server (Target npm.cmd explicitly to prevent Win32 launch exception)
 Write-Info "Launching Vite PWA Dashboard on http://localhost:5173..."
