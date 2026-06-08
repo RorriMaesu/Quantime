@@ -22,74 +22,12 @@ def lock_single_instance():
         sys.exit(0)
 
 def check_and_start_ollama():
-    """Ensures the Ollama GUI application is running (showing in the tray) by cleaning up headless zombies."""
-    import socket
-    
-    gui_running = False
-    headless_running = False
-    has_inaccessible_process = False
-    
-    # 1. Inspect processes using PowerShell Get-CimInstance
-    try:
-        # Run PowerShell to get PID and CommandLine of all ollama.exe processes
-        cmd = ["powershell.exe", "-NoProfile", "-Command", 
-               "Get-CimInstance Win32_Process -Filter \"name = 'ollama.exe'\" | ForEach-Object { [PSCustomObject]@{Id=$_.ProcessId; Cmd=$_.CommandLine} } | ConvertTo-Json"]
-        
-        out = subprocess.check_output(
-            cmd,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        ).decode('utf-8', errors='ignore').strip()
-        
-        if out:
-            # Parse JSON output (could be a single object or list of objects)
-            import json
-            data = json.loads(out)
-            processes = data if isinstance(data, list) else [data]
-            
-            for p in processes:
-                cmdline = p.get("Cmd")
-                if not cmdline:
-                    # Inaccessible process (likely running as Administrator / elevated)
-                    has_inaccessible_process = True
-                    continue
-                
-                if "serve" in cmdline.lower():
-                    headless_running = True
-                else:
-                    gui_running = True
-    except Exception:
-        # Fallback if PowerShell query fails
-        pass
-
-    if gui_running:
-        # GUI is already active in the system tray; do nothing
-        return
-
-    # Check if port 11434 is occupied
-    port_in_use = False
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(0.5)
-    try:
-        s.connect(('127.0.0.1', 11434))
-        port_in_use = True
-        s.close()
-    except Exception:
-        pass
-
-    # If port is in use and we have an inaccessible process, we cannot kill it to start the GUI
-    if port_in_use and has_inaccessible_process:
-        # Avoid print/warning blocking or stdout interference
-        return
-
-    # Kill any accessible headless processes to free up port 11434
-    try:
-        subprocess.run(["taskkill", "/F", "/IM", "ollama.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
-        subprocess.run(["taskkill", "/F", "/IM", "llama-server.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
-        time.sleep(0.5)
-    except Exception:
-        pass
-
+    """Ensures the Ollama GUI application is running by launching it on startup.
+    If it is already running, the Ollama GUI app will exit silently due to its single-instance lock."""
+    import os
+    import subprocess
     import shutil
+
     possible_paths = []
     
     # 1. Check LOCALAPPDATA
@@ -142,8 +80,11 @@ def check_and_start_ollama():
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = 6  # SW_MINIMIZE
-            subprocess.Popen([ollama_path], startupinfo=startupinfo)
-            return
+            try:
+                subprocess.Popen([ollama_path], startupinfo=startupinfo)
+                return
+            except Exception:
+                pass
 
 # Add directory root to path
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
