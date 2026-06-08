@@ -229,6 +229,21 @@ Start-Process -FilePath $pythonCmd -ArgumentList "-m venv `"$appDir\backend\.ven
 Write-ProgressUpdate 65 "Installing Python packages..."
 Start-Process -FilePath "$appDir\backend\.venv\Scripts\pip" -ArgumentList "install -r `"$appDir\backend\requirements.txt`"" -Wait -NoNewWindow
 
+# ---------------------------------------------------------------------
+# 6. Configure Permissions and Pre-cache AI Models
+# ---------------------------------------------------------------------
+Write-ProgressUpdate 70 "Configuring folder permissions for shared AI models..."
+$programDataDir = "C:\ProgramData\Quantime"
+if (-not (Test-Path $programDataDir)) {
+    New-Item -ItemType Directory -Force -Path $programDataDir | Out-Null
+}
+# Grant Full Control to the Users group, recursively inherited
+icacls "$programDataDir" /grant "Users:(OI)(CI)F" /T
+
+Write-ProgressUpdate 75 "Preloading and caching Hugging Face AI models..."
+Start-Process -FilePath "$appDir\backend\.venv\Scripts\python.exe" -ArgumentList "`"$appDir\backend\preload_hf_models.py`"" -Wait -NoNewWindow
+
+
 
 Write-ProgressUpdate 85 "Installing frontend package packages..."
 Push-Location "$appDir\frontend"
