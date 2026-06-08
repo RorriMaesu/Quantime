@@ -101,6 +101,30 @@ if (-not (Test-Path "backend/.venv")) {
 
 Write-Info "Activating Python virtual environment and installing backend packages..."
 & "backend/.venv/Scripts/pip" install -r backend/requirements.txt
+
+# Verify and Download Microsoft VibeVoice if missing
+$vibevoicePath = "backend/vibevoice_src"
+if (-not (Test-Path $vibevoicePath)) {
+    Write-Warn "VibeVoice source codebase is missing. Downloading from GitHub..."
+    $zipUrl = "https://github.com/microsoft/VibeVoice/archive/refs/heads/main.zip"
+    $zipPath = "$env:TEMP\vibevoice.zip"
+    $extractDir = "$env:TEMP\vibevoice-extract"
+    
+    if (Test-Path $extractDir) {
+        Remove-Item -Recurse -Force $extractDir
+    }
+    
+    Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
+    Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+    $extractedFolder = Get-ChildItem -Path $extractDir -Directory | Select-Object -First 1
+    Move-Item -Path $extractedFolder.FullName -Destination $vibevoicePath -Force
+    Remove-Item $zipPath -Force
+    Remove-Item -Recurse -Force $extractDir
+    Write-Ok "VibeVoice downloaded successfully."
+}
+
+Write-Info "Installing VibeVoice library and dependencies..."
+& "backend/.venv/Scripts/pip" install "$vibevoicePath"
 Write-Ok "Backend dependencies up to date."
 
 # Frontend node modules (Target npm.cmd explicitly to prevent Win32 launch exception)

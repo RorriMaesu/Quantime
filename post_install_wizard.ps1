@@ -168,6 +168,30 @@ Write-Output "Installing Python virtual environment packages..."
 Start-Process -FilePath $pythonCmd -ArgumentList "-m venv `"$appDir\backend\.venv`"" -Wait -NoNewWindow
 Start-Process -FilePath "$appDir\backend\.venv\Scripts\pip" -ArgumentList "install -r `"$appDir\backend\requirements.txt`"" -Wait -NoNewWindow
 
+# Verify and Download Microsoft VibeVoice if missing
+$vibevoicePath = "$appDir\backend\vibevoice_src"
+if (-not (Test-Path $vibevoicePath)) {
+    Write-Output "VibeVoice source codebase is missing. Downloading from GitHub..."
+    $zipUrl = "https://github.com/microsoft/VibeVoice/archive/refs/heads/main.zip"
+    $zipPath = "$env:TEMP\vibevoice.zip"
+    $extractDir = "$env:TEMP\vibevoice-extract"
+    
+    if (Test-Path $extractDir) {
+        Remove-Item -Recurse -Force $extractDir
+    }
+    
+    Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
+    Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+    $extractedFolder = Get-ChildItem -Path $extractDir -Directory | Select-Object -First 1
+    Move-Item -Path $extractedFolder.FullName -Destination $vibevoicePath -Force
+    Remove-Item $zipPath -Force
+    Remove-Item -Recurse -Force $extractDir
+    Write-Output "VibeVoice downloaded successfully."
+}
+
+Write-Output "Installing VibeVoice library and dependencies..."
+Start-Process -FilePath "$appDir\backend\.venv\Scripts\pip" -ArgumentList "install `"$vibevoicePath`"" -Wait -NoNewWindow
+
 Write-Output "Installing frontend package packages and compiling production bundle..."
 Push-Location "$appDir\frontend"
 Start-Process -FilePath "npm.cmd" -ArgumentList "install" -Wait -NoNewWindow
