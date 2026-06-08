@@ -4,7 +4,7 @@
 [Setup]
 AppId={{D37E618A-706E-45E4-A159-4E6DF9B53A04}}
 AppName=Quantime
-AppVersion=1.2.7
+AppVersion=1.2.8
 AppPublisher=RorriMaesu
 DefaultDirName={userpf}\Quantime
 DefaultGroupName=Quantime
@@ -49,8 +49,8 @@ var
 begin
   Result := True;
   
-  // Terminate any running Quantime processes first to release file locks and prevent reboot requests
-  Exec('powershell.exe', '-NoProfile -NonInteractive -Command "Get-Process | Where-Object { $_.Path -and ($_.Path -like ''*Quantime*'') } | Stop-Process -Force"', '', SW_HIDE, ewWaitUntilTerminated, iResultCode);
+  // Terminate only running backend (python/pythonw) and frontend (node) processes associated with Quantime to release file locks and prevent reboot requests
+  Exec('powershell.exe', '-NoProfile -NonInteractive -Command "Get-Process | Where-Object { ($_.Name -eq ''pythonw'' -or $_.Name -eq ''python'' -or $_.Name -eq ''node'') -and $_.Path -and ($_.Path -like ''*Quantime*'') } | Stop-Process -Force"', '', SW_HIDE, ewWaitUntilTerminated, iResultCode);
 
   sUnInstString := GetUninstallString();
   if sUnInstString <> '' then
