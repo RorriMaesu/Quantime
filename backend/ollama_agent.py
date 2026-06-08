@@ -47,6 +47,19 @@ def modify_task_time(task_id: str, new_start: str, new_end: str) -> Dict[str, An
     Critical Constraint: Aborts immediately if target task is marked as a HARD constraint.
     """
     logger.info(f"Ollama Agent executing: modify_task_time({task_id}, {new_start}, {new_end})")
+    
+    import datetime
+    try:
+        task_start = datetime.datetime.fromisoformat(new_start.replace('Z', '+00:00'))
+        now = datetime.datetime.now().astimezone()
+        if task_start < now:
+            return {
+                "status": "error",
+                "message": f"Conflict: Cannot modify task time to start in the past. Staged new_start '{new_start}' is before current time '{now.isoformat()}'."
+            }
+    except Exception as e:
+        logger.error(f"Error checking new_start bounds: {e}")
+
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -219,6 +232,19 @@ def create_task(title: str, start_time: str, end_time: str, description: str = "
     Creates a new schedule task locally and mirrors it to Firestore if active.
     """
     logger.info(f"Ollama Agent executing: create_task({title}, {start_time}, {end_time})")
+    
+    import datetime
+    try:
+        task_start = datetime.datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+        now = datetime.datetime.now().astimezone()
+        if task_start < now:
+            return {
+                "status": "error",
+                "message": f"Conflict: Cannot schedule task in the past. Staged start_time '{start_time}' is before current time '{now.isoformat()}'."
+            }
+    except Exception as e:
+        logger.error(f"Error checking start_time bounds: {e}")
+
     task_id = f"task_{int(time.time())}"
     
     conn = get_db_connection()
@@ -573,6 +599,7 @@ Behavioral Guidelines & Rules:
    - Instead, generate a unique transaction ID (`tx_<timestamp>`) and stage up to three rescheduling workaround options using `stage_schedule_proposal` (e.g. option_id="compaction", "postponement", or "prioritization").
    - Clearly explain each option's strategy in the text response and output a `<schedule-proposal tx="tx_id_here">` tag at the end of your message to render the interactive buttons in the UI.
 8. **Conversational & Proactive**: Give clear summaries of actions you took, highlight what tools you executed, explain why you restructured the schedule, and outline any proposed adjustments clearly to the user.
+9. **No Scheduling in the Past**: You must NEVER create new tasks or modify existing tasks to start in the past relative to the current date-time context. Always verify the current time before choosing task time slots.
 """
 
 def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], audio_b64: Optional[str] = None) -> Generator[Tuple[str, str], None, None]:
