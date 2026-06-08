@@ -1708,6 +1708,23 @@ def handle_notification_action(payload: ActionPayload):
     else:
         raise HTTPException(status_code=400, detail="Invalid action type")
 
+# Serve static assets from frontend/dist
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+frontend_dist_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"))
+if os.path.exists(frontend_dist_path):
+    app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dist_path, "assets")), name="assets")
+    
+    @app.get("/{catchall:path}")
+    def serve_frontend(catchall: str):
+        if catchall.startswith("api") or catchall.startswith("auth"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        full_path = os.path.join(frontend_dist_path, catchall)
+        if os.path.isfile(full_path):
+            return FileResponse(full_path)
+        return FileResponse(os.path.join(frontend_dist_path, "index.html"))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)

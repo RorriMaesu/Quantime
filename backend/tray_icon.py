@@ -182,43 +182,57 @@ def start_services():
         stderr=log_file
     )
     
-    # 2. Locate Node executor and run JS scripts directly (bypassing cmd/batch files)
+    # Check if we are in production mode (frontend/dist exists)
+    frontend_dist_path = os.path.join(base_dir, "frontend", "dist")
+    is_prod = os.path.exists(frontend_dist_path)
+    
     node_bin = find_node()
-    vite_js = os.path.join(base_dir, "frontend", "node_modules", "vite", "bin", "vite.js")
     lt_js = os.path.join(base_dir, "frontend", "node_modules", "localtunnel", "bin", "lt.js")
     
-    # 3. Start Vite frontend
-    vite_log_path = os.path.join(base_dir, "frontend", "vite.log")
-    try:
-        vite_log = open(vite_log_path, "a")
-    except Exception:
-        vite_log = subprocess.DEVNULL
+    if not is_prod:
+        # 2. Locate Vite JS
+        vite_js = os.path.join(base_dir, "frontend", "node_modules", "vite", "bin", "vite.js")
         
-    vite_proc = subprocess.Popen(
-        [node_bin, vite_js],
-        cwd=os.path.join(base_dir, "frontend"),
-        creationflags=creation_flags,
-        stdout=vite_log,
-        stderr=vite_log
-    )
-    
+        # 3. Start Vite frontend
+        vite_log_path = os.path.join(base_dir, "frontend", "vite.log")
+        try:
+            vite_log = open(vite_log_path, "a")
+        except Exception:
+            vite_log = subprocess.DEVNULL
+            
+        vite_proc = subprocess.Popen(
+            [node_bin, vite_js],
+            cwd=os.path.join(base_dir, "frontend"),
+            creationflags=creation_flags,
+            stdout=vite_log,
+            stderr=vite_log
+        )
+        
+        tunnel_port = "5173"
+    else:
+        vite_proc = None
+        tunnel_port = "8000"
+        
     # 4. Start Localtunnel gateway
-    tunnel_log_path = os.path.join(base_dir, "frontend", "localtunnel.log")
-    try:
-        tunnel_log = open(tunnel_log_path, "a")
-    except Exception:
-        tunnel_log = subprocess.DEVNULL
-        
-    tunnel_proc = subprocess.Popen(
-        [node_bin, lt_js, "--port", "5173", "--subdomain", "quantime-scheduler-green", "--local-host", "127.0.0.1"],
-        cwd=os.path.join(base_dir, "frontend"),
-        creationflags=creation_flags,
-        stdout=tunnel_log,
-        stderr=tunnel_log
-    )
+    if os.path.exists(lt_js):
+        tunnel_log_path = os.path.join(base_dir, "frontend", "localtunnel.log")
+        try:
+            tunnel_log = open(tunnel_log_path, "a")
+        except Exception:
+            tunnel_log = subprocess.DEVNULL
+            
+        tunnel_proc = subprocess.Popen(
+            [node_bin, lt_js, "--port", tunnel_port, "--subdomain", "quantime-scheduler-green", "--local-host", "127.0.0.1"],
+            cwd=os.path.join(base_dir, "frontend"),
+            creationflags=creation_flags,
+            stdout=tunnel_log,
+            stderr=tunnel_log
+        )
 
 def open_dashboard(icon, item):
-    webbrowser.open("http://localhost:5173")
+    frontend_dist_path = os.path.join(base_dir, "frontend", "dist")
+    port = "8000" if os.path.exists(frontend_dist_path) else "5173"
+    webbrowser.open(f"http://localhost:{port}")
 
 def restart_services(icon, item):
     global fastapi_proc, vite_proc, tunnel_proc
@@ -250,19 +264,24 @@ def open_dashboard_when_ready():
         except Exception:
             time.sleep(0.5)
             
-    # Wait for frontend (5173) to start accepting connections
-    for _ in range(30):
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.5)
-            s.connect(('127.0.0.1', 5173))
-            s.close()
-            break
-        except Exception:
-            time.sleep(0.5)
+    frontend_dist_path = os.path.join(base_dir, "frontend", "dist")
+    is_prod = os.path.exists(frontend_dist_path)
+    
+    if not is_prod:
+        # Wait for frontend (5173) to start accepting connections
+        for _ in range(30):
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(0.5)
+                s.connect(('127.0.0.1', 5173))
+                s.close()
+                break
+            except Exception:
+                time.sleep(0.5)
             
     time.sleep(0.5)
-    webbrowser.open("http://localhost:5173")
+    port = "8000" if is_prod else "5173"
+    webbrowser.open(f"http://localhost:{port}")
 
 def monitor_localtunnel():
     """Periodically health-checks the public LocalTunnel endpoint and restarts it if it goes offline or returns 502/503."""
@@ -290,22 +309,26 @@ def monitor_localtunnel():
             kill_process_tree(tunnel_proc)
             time.sleep(1)
             
+            frontend_dist_path = os.path.join(base_dir, "frontend", "dist")
+            port = "8000" if os.path.exists(frontend_dist_path) else "5173"
+            
             creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             node_bin = find_node()
             lt_js = os.path.join(base_dir, "frontend", "node_modules", "localtunnel", "bin", "lt.js")
-            tunnel_log_path = os.path.join(base_dir, "frontend", "localtunnel.log")
-            try:
-                tunnel_log = open(tunnel_log_path, "a")
-            except Exception:
-                tunnel_log = subprocess.DEVNULL
-                
-            tunnel_proc = subprocess.Popen(
-                [node_bin, lt_js, "--port", "5173", "--subdomain", "quantime-scheduler-green", "--local-host", "127.0.0.1"],
-                cwd=os.path.join(base_dir, "frontend"),
-                creationflags=creation_flags,
-                stdout=tunnel_log,
-                stderr=tunnel_log
-            )
+            if os.path.exists(lt_js):
+                tunnel_log_path = os.path.join(base_dir, "frontend", "localtunnel.log")
+                try:
+                    tunnel_log = open(tunnel_log_path, "a")
+                except Exception:
+                    tunnel_log = subprocess.DEVNULL
+                    
+                tunnel_proc = subprocess.Popen(
+                    [node_bin, lt_js, "--port", port, "--subdomain", "quantime-scheduler-green", "--local-host", "127.0.0.1"],
+                    cwd=os.path.join(base_dir, "frontend"),
+                    creationflags=creation_flags,
+                    stdout=tunnel_log,
+                    stderr=tunnel_log
+                )
             
         time.sleep(15)
 

@@ -168,9 +168,10 @@ Write-Output "Installing Python virtual environment packages..."
 Start-Process -FilePath $pythonCmd -ArgumentList "-m venv `"$appDir\backend\.venv`"" -Wait -NoNewWindow
 Start-Process -FilePath "$appDir\backend\.venv\Scripts\pip" -ArgumentList "install -r `"$appDir\backend\requirements.txt`"" -Wait -NoNewWindow
 
-Write-Output "Installing frontend package packages..."
+Write-Output "Installing frontend package packages and compiling production bundle..."
 Push-Location "$appDir\frontend"
 Start-Process -FilePath "npm.cmd" -ArgumentList "install" -Wait -NoNewWindow
+Start-Process -FilePath "npm.cmd" -ArgumentList "run build" -Wait -NoNewWindow
 Pop-Location
 
 # ---------------------------------------------------------------------
