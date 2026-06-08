@@ -30,7 +30,7 @@ logger = logging.getLogger("quantime.gateway")
 logging.basicConfig(level=logging.INFO)
 
 # Initialize FastAPI Application
-app = FastAPI(title="Quantime Gateway API", version="1.1")
+app = FastAPI(title="Quantime Gateway API", version="1.0")
 
 # Configure Cross-Origin Resource Sharing (CORS) for development UI access
 app.add_middleware(
