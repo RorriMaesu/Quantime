@@ -92,7 +92,7 @@ def get_vibevoice_pipeline():
             # Decide dtype & attention implementation
             if device == "cuda":
                 load_dtype = torch.bfloat16
-                attn_impl = "flash_attention_2"
+                attn_impl = "sdpa"
             else:
                 load_dtype = torch.float32
                 attn_impl = "sdpa"
@@ -119,7 +119,7 @@ def get_vibevoice_pipeline():
                         attn_implementation=attn_impl
                     )
                 except Exception as online_err:
-                    # If GPU model fails (e.g. Flash Attention errors), retry on CPU as fallback
+                    # If GPU model fails, retry on CPU as fallback
                     logger.warning(f"VibeVoice online load failed ({online_err}). Retrying on CPU fallback...")
                     _vibevoice_model = VibeVoiceStreamingForConditionalGenerationInference.from_pretrained(
                         model_path,
@@ -306,8 +306,88 @@ def pcm_to_wav(pcm_data: bytes, sample_rate: int = 16000) -> bytes:
         wav_file.writeframes(pcm_data)
     return wav_buf.getvalue()
 
+def normalize_text_for_tts(text: str) -> str:
+    """Cleans up text for Text-to-Speech synthesis by stripping markdown, emojis, task IDs, and expanding numbers to words."""
+    import re
+    from num2words import num2words
+    
+    # 1. Remove markdown syntax like *, _, `, #, -, [ ]
+    text = re.sub(r'[*_`#\-]', ' ', text)
+    text = re.sub(r'\[\s*x?\s*\]', ' ', text)
+    
+    # 2. Filter out specific database identifiers like task_1780851954
+    text = re.sub(r'task\s+\d+|task\d+|task\s*_\s*\d+', ' ', text)
+    
+    # 3. Filter out long numbers (e.g. 8+ digits) that shouldn't be read out loud
+    text = re.sub(r'\b\d{8,}\b', ' ', text)
+    
+    # 4. Remove emojis or decorative symbols (e.g., checkmarks, warning icons, bells)
+    text = re.sub(r'[\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD00-\uDFFF]', ' ', text)
+    
+    # 5. Clean remaining function name underscores to spaces for natural speech (e.g. get_current_schedule -> get current schedule)
+    text = re.sub(r'([a-zA-Z])_([a-zA-Z])', r'\1 \2', text)
+    
+    # 5a. Replace timezone abbreviations with common tongue names
+    tz_map = {
+        r'\bPST\b': 'Pacific Time',
+        r'\bPDT\b': 'Pacific Time',
+        r'\bEST\b': 'Eastern Time',
+        r'\bEDT\b': 'Eastern Time',
+        r'\bCST\b': 'Central Time',
+        r'\bCDT\b': 'Central Time',
+        r'\bMST\b': 'Mountain Time',
+        r'\bMDT\b': 'Mountain Time',
+        r'\bUTC\b': 'Greenwich Mean Time',
+        r'\bGMT\b': 'Greenwich Mean Time'
+    }
+    for tz_pattern, tz_expanded in tz_map.items():
+        text = re.sub(tz_pattern, tz_expanded, text, flags=re.IGNORECASE)
+        
+    # 5b. Format times to be read conversationally (e.g. 10:00 AM -> 10 AM, 10:30 PM -> 10 thirty PM, 2:05 -> 2 oh 5)
+    def replace_hour_only_time(match):
+        hour = int(match.group(1))
+        meridiem = match.group(2)
+        if meridiem:
+            return f"{hour} {meridiem}"
+        else:
+            return f"{hour} o'clock"
+            
+    text = re.sub(r'\b(\d{1,2}):00\s*(AM|PM|am|pm)?\b', replace_hour_only_time, text)
+    
+    def replace_standard_time(match):
+        hour = int(match.group(1))
+        minutes = int(match.group(2))
+        meridiem = match.group(3)
+        if minutes == 0:
+            min_str = ""
+        elif minutes < 10:
+            min_str = f"oh {minutes}"
+        else:
+            min_str = str(minutes)
+        meridiem_str = f" {meridiem}" if meridiem else ""
+        return f"{hour} {min_str}{meridiem_str}"
+        
+    text = re.sub(r'\b(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?\b', replace_standard_time, text)
+
+    # 6. Expand other digits/numbers to words
+    def replace_number(match):
+        num_str = match.group(0)
+        try:
+            return num2words(int(num_str))
+        except Exception:
+            return num_str
+    text = re.sub(r'\b\d+\b', replace_number, text)
+    
+    # 7. Normalize extra whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
 def synthesize_text_to_pcm(text: str, voice: str = 'af_heart') -> bytes:
     """Synthesizes text to raw mono PCM bytes."""
+    text = normalize_text_for_tts(text)
+    if not text:
+        return b""
+        
     # Check if custom cloned voice is requested
     if voice == 'custom_cloned':
         model, processor = get_vibevoice_pipeline()
@@ -329,18 +409,29 @@ def synthesize_text_to_pcm(text: str, voice: str = 'af_heart') -> bytes:
                 with torch.serialization.safe_globals([BaseModelOutputWithPast, DynamicCache]):
                     voice_preset = torch.load(preset_path, map_location=device, weights_only=False)
                 
-                # Move to correct device
+                # Move to correct device and dtype
+                model_dtype = next(model.parameters()).dtype
                 for k in voice_preset:
-                    voice_preset[k].last_hidden_state = voice_preset[k].last_hidden_state.to(device)
+                    voice_preset[k].last_hidden_state = voice_preset[k].last_hidden_state.to(device=device, dtype=model_dtype)
                     cache = voice_preset[k].past_key_values
+                    if hasattr(cache, 'layers'):
+                        for layer in cache.layers:
+                            if hasattr(layer, 'keys') and layer.keys is not None:
+                                layer.keys = layer.keys.to(device=device, dtype=model_dtype)
+                            if hasattr(layer, 'values') and layer.values is not None:
+                                layer.values = layer.values.to(device=device, dtype=model_dtype)
+                            if hasattr(layer, 'key_cache') and layer.key_cache is not None:
+                                layer.key_cache = layer.key_cache.to(device=device, dtype=model_dtype)
+                            if hasattr(layer, 'value_cache') and layer.value_cache is not None:
+                                layer.value_cache = layer.value_cache.to(device=device, dtype=model_dtype)
                     if hasattr(cache, '_key_cache'):
                         for layer_idx in range(len(cache._key_cache)):
-                            cache._key_cache[layer_idx] = cache._key_cache[layer_idx].to(device)
-                            cache._value_cache[layer_idx] = cache._value_cache[layer_idx].to(device)
+                            cache._key_cache[layer_idx] = cache._key_cache[layer_idx].to(device=device, dtype=model_dtype)
+                            cache._value_cache[layer_idx] = cache._value_cache[layer_idx].to(device=device, dtype=model_dtype)
                     elif hasattr(cache, 'key_cache'):
                         for layer_idx in range(len(cache.key_cache)):
-                            cache.key_cache[layer_idx] = cache.key_cache[layer_idx].to(device)
-                            cache.value_cache[layer_idx] = cache.value_cache[layer_idx].to(device)
+                            cache.key_cache[layer_idx] = cache.key_cache[layer_idx].to(device=device, dtype=model_dtype)
+                            cache.value_cache[layer_idx] = cache.value_cache[layer_idx].to(device=device, dtype=model_dtype)
                             
                 inputs = processor.process_input_with_cached_prompt(
                     text=text,

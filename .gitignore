@@ -35,3 +35,8 @@ backend/list_hf_files.py
 backend/test_voice_cloning.py
 backend/generate_preset_from_wav.py
 backend/find_wavs.py
+
+# User sample voice files
+AndySampleVoice.m4a
+AndySampleVoice_converted.wav
+AndySampleVoice_preset.pt

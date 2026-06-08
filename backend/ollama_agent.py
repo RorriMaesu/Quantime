@@ -16,6 +16,21 @@ logging.basicConfig(level=logging.INFO)
 OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
 MODEL_NAME = "gemma4-agent-mtp"
 
+def get_selected_model() -> str:
+    """Helper to query the user profile database for selected LLM model."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT value FROM user_profiles WHERE key = 'llm_model'")
+        row = cursor.fetchone()
+        if row and row["value"]:
+            return row["value"]
+    except Exception as e:
+        logger.error(f"Error querying user profile llm_model: {e}")
+    finally:
+        conn.close()
+    return MODEL_NAME
+
 # =====================================================================
 # Core Database Tool Implementations
 # =====================================================================
@@ -41,11 +56,45 @@ def get_current_schedule(start_date: str, end_date: str) -> List[Dict[str, Any]]
     finally:
         conn.close()
 
+def resolve_task_id(task_id_or_title: str) -> str:
+    """
+    Resolves a task_id or title to a valid SQLite task ID.
+    If direct lookup fails, searches for a matching task title (case-insensitive fuzzy match).
+    """
+    if not task_id_or_title:
+        return task_id_or_title
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # Check direct ID
+        cursor.execute("SELECT id FROM tasks WHERE id = ?", (task_id_or_title,))
+        row = cursor.fetchone()
+        if row:
+            return row["id"]
+            
+        # Try exact title match
+        cursor.execute("SELECT id FROM tasks WHERE title = ?", (task_id_or_title,))
+        row = cursor.fetchone()
+        if row:
+            return row["id"]
+            
+        # Try fuzzy title match
+        cursor.execute("SELECT id FROM tasks WHERE title LIKE ?", (f"%{task_id_or_title}%",))
+        rows = cursor.fetchall()
+        if len(rows) == 1:
+            return rows[0]["id"]
+    except Exception as e:
+        logger.warning(f"Error resolving task ID/title fuzzy lookup: {e}")
+    finally:
+        conn.close()
+    return task_id_or_title
+
 def modify_task_time(task_id: str, new_start: str, new_end: str) -> Dict[str, Any]:
     """
     Mutates a local task's scheduling bounds.
     Critical Constraint: Aborts immediately if target task is marked as a HARD constraint.
     """
+    task_id = resolve_task_id(task_id)
     logger.info(f"Ollama Agent executing: modify_task_time({task_id}, {new_start}, {new_end})")
     
     import datetime
@@ -113,6 +162,7 @@ def resolve_dependencies(task_id: str) -> Dict[str, Any]:
     Traces dependencies of the task and checks the DAG dependency graph.
     Returns status confirmation or raises ValueError if circular dependency locks exist.
     """
+    task_id = resolve_task_id(task_id)
     logger.info(f"Ollama Agent executing: resolve_dependencies({task_id})")
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -171,6 +221,8 @@ def create_task_dependency(task_id: str, depends_on_task_id: str) -> Dict[str, A
     Configures a dependency edge (task_id depends on depends_on_task_id).
     Validates graph is free of cycles before committing.
     """
+    task_id = resolve_task_id(task_id)
+    depends_on_task_id = resolve_task_id(depends_on_task_id)
     logger.info(f"Ollama Agent executing: create_task_dependency({task_id}, {depends_on_task_id})")
     if task_id == depends_on_task_id:
         raise ValueError("A task cannot establish a dependency on itself.")
@@ -284,6 +336,7 @@ def delete_task(task_id: str) -> Dict[str, Any]:
     """
     Deletes an existing task from SQLite.
     """
+    task_id = resolve_task_id(task_id)
     logger.info(f"Ollama Agent executing: delete_task({task_id})")
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -307,6 +360,72 @@ def delete_task(task_id: str) -> Dict[str, Any]:
             logger.error(f"Failed to mirror task deletion to Firestore: {fe}")
             
         return {"status": "success", "message": f"Task '{row['title']}' (ID: {task_id}) deleted successfully."}
+    finally:
+        conn.close()
+
+def update_task_metadata(task_id: str, title: Optional[str] = None, description: Optional[str] = None, energy_level: Optional[str] = None, constraint_type: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Updates an existing task's metadata, such as its title (renaming), description (adding/updating notes), energy_level, or constraint_type.
+    """
+    task_id = resolve_task_id(task_id)
+    logger.info(f"Ollama Agent executing: update_task_metadata(task_id={task_id}, title={title}, description={description})")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # Check if the task exists
+        cursor.execute("SELECT id, title, description, energy_level, constraint_type FROM tasks WHERE id = ?", (task_id,))
+        task = cursor.fetchone()
+        if not task:
+            raise ValueError(f"Task with ID '{task_id}' not found.")
+            
+        # Build dynamic SQL update fields
+        fields = []
+        params = []
+        
+        if title is not None:
+            fields.append("title = ?")
+            params.append(title)
+        if description is not None:
+            fields.append("description = ?")
+            params.append(description)
+        if energy_level is not None:
+            fields.append("energy_level = ?")
+            params.append(energy_level)
+        if constraint_type is not None:
+            fields.append("constraint_type = ?")
+            params.append(constraint_type)
+            
+        if not fields:
+            return {"status": "success", "message": "No updates specified."}
+            
+        params.append(task_id)
+        update_query = f"UPDATE tasks SET {', '.join(fields)}, updated_at = {time.time()} WHERE id = ?"
+        cursor.execute(update_query, tuple(params))
+        conn.commit()
+        
+        # Mirror metadata update to Firestore
+        try:
+            from backend.app import db_firestore, MOCK_USER_ID
+            if db_firestore is not None:
+                task_ref = db_firestore.collection("users").document(MOCK_USER_ID).collection("tasks").document(task_id)
+                update_data = {}
+                if title is not None:
+                    update_data["title"] = title
+                if description is not None:
+                    update_data["description"] = description
+                if energy_level is not None:
+                    update_data["energy_level"] = energy_level
+                if constraint_type is not None:
+                    update_data["constraint_type"] = constraint_type
+                if update_data:
+                    task_ref.update(update_data)
+        except Exception as fe:
+            logger.error(f"Failed to mirror task updates to Firestore: {fe}")
+            
+        return {"status": "success", "message": f"Task '{task_id}' details updated successfully."}
+    except Exception as e:
+        logger.error(f"Failed to update task details: {e}")
+        return {"status": "error", "message": str(e)}
     finally:
         conn.close()
 
@@ -389,6 +508,63 @@ def get_circadian_profile() -> Dict[str, Any]:
     finally:
         conn.close()
 
+def get_day_of_week(date_query: str) -> Dict[str, Any]:
+    """
+    Calculates the exact day of the week (e.g. Monday, Tuesday) for any given date query (e.g. 'July 6, 2026', '2026-12-25', 'tomorrow').
+    """
+    import datetime
+    import re
+    logger.info(f"Ollama Agent executing: get_day_of_week({date_query})")
+    
+    cleaned = date_query.lower().strip()
+    now = datetime.datetime.now()
+    
+    if cleaned == "today":
+        target_dt = now
+    elif cleaned == "tomorrow":
+        target_dt = now + datetime.timedelta(days=1)
+    elif cleaned == "yesterday":
+        target_dt = now - datetime.timedelta(days=1)
+    else:
+        # Clean ordinals
+        cleaned = re.sub(r'(\d+)(st|nd|rd|th)', r'\1', cleaned)
+        target_dt = None
+        for fmt in (
+            "%Y-%m-%d", "%Y/%m/%d", "%m-%d-%Y", "%m/%d/%Y",
+            "%B %d %Y", "%b %d %Y", "%B %d, %Y", "%b %d, %Y",
+            "%d %B %Y", "%d %b %Y", "%d %B, %Y", "%d %b, %Y",
+            "%B %d", "%b %d", "%d %B", "%d %b"
+        ):
+            try:
+                parsed = datetime.datetime.strptime(cleaned, fmt)
+                if "%Y" not in fmt and "%y" not in fmt:
+                    parsed = parsed.replace(year=now.year)
+                target_dt = parsed
+                break
+            except ValueError:
+                continue
+                
+    if target_dt is None:
+        try:
+            from dateutil import parser
+            target_dt = parser.parse(date_query, default=now)
+        except Exception:
+            pass
+            
+    if target_dt is not None:
+        return {
+            "success": True,
+            "query": date_query,
+            "date": target_dt.strftime("%Y-%m-%d"),
+            "day_of_week": target_dt.strftime("%A"),
+            "formatted": target_dt.strftime("%A, %B %d, %Y")
+        }
+    else:
+        return {
+            "success": False,
+            "message": f"Could not parse date: {date_query}. Provide a standard date."
+        }
+
 # Maps tool identifiers to corresponding local modules
 TOOL_FUNCTIONS = {
     "get_current_schedule": get_current_schedule,
@@ -397,14 +573,48 @@ TOOL_FUNCTIONS = {
     "create_task_dependency": create_task_dependency,
     "create_task": create_task,
     "delete_task": delete_task,
+    "update_task_metadata": update_task_metadata,
     "fetch_unread_emails": fetch_unread_emails,
     "query_semantic_memory": query_semantic_memory,
     "sync_google_calendar": sync_google_calendar,
     "stage_schedule_proposal": stage_schedule_proposal,
-    "get_circadian_profile": get_circadian_profile
+    "get_circadian_profile": get_circadian_profile,
+    "get_day_of_week": get_day_of_week
 }
 
 TOOL_SCHEMAS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "update_task_metadata",
+            "description": "Updates details for an existing task: renaming the title, modifying or adding notes/description, changing energy levels, or editing constraint types.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "The unique ID of the task to update"},
+                    "title": {"type": "string", "description": "The new title to rename the task to (optional)"},
+                    "description": {"type": "string", "description": "The new description or notes to add/update for the task (optional)"},
+                    "energy_level": {"type": "string", "enum": ["none", "crimson", "teal"], "description": "Update energy classification band (optional)"},
+                    "constraint_type": {"type": "string", "enum": ["soft", "hard"], "description": "Update priority constraint type (optional)"}
+                },
+                "required": ["task_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_day_of_week",
+            "description": "Calculate the exact day of the week (e.g. Monday, Tuesday) for any date query (e.g. 'July 6, 2026', 'next Friday', '2026-07-06').",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date_query": {"type": "string", "description": "The date reference to compute, e.g. 'July 6, 2026' or '2026-07-06'"}
+                },
+                "required": ["date_query"]
+            }
+        }
+    },
     {
         "type": "function",
         "function": {
@@ -600,6 +810,7 @@ Behavioral Guidelines & Rules:
    - Clearly explain each option's strategy in the text response and output a `<schedule-proposal tx="tx_id_here">` tag at the end of your message to render the interactive buttons in the UI.
 8. **Conversational & Proactive**: Give clear summaries of actions you took, highlight what tools you executed, explain why you restructured the schedule, and outline any proposed adjustments clearly to the user.
 9. **No Scheduling in the Past**: You must NEVER create new tasks or modify existing tasks to start in the past relative to the current date-time context. Always verify the current time before choosing task time slots.
+10. **Calendar Date Math**: You must NEVER guess or calculate the day of the week for a specific calendar date yourself. If the user asks about a day of the week, a holiday, or asks you to perform calendar math (e.g. "what day is July 6th?", "what day is next Friday?", "what day is October 24th?"), you MUST call the `get_day_of_week` tool to compute the correct date and weekday.
 """
 
 def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], audio_b64: Optional[str] = None) -> Generator[Tuple[str, str], None, None]:
@@ -608,6 +819,7 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], 
     Appends '<|think|>' token to prompt to force deep-reasoning mode.
     Correctly supports sequential, recursive multi-turn tool calling up to max_depth of 5.
     """
+    # Generate 14-day calendar reference map to prevent LLM day/date calculation hallucinations
     import datetime
     tz_offset = datetime.datetime.now().astimezone().strftime('%z')
     if not tz_offset or len(tz_offset) < 5:
@@ -616,6 +828,19 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], 
     tz_suffix = f"{tz_offset[:3]}:{tz_offset[3:]}"
     current_time_str = time.strftime("%A, %B %d, %Y, %I:%M %p %Z")
     
+    calendar_ref = []
+    base_date = datetime.datetime.now()
+    for i in range(14):
+        d = base_date + datetime.timedelta(days=i)
+        day_str = d.strftime("%A, %B %d, %Y")
+        if i == 0:
+            calendar_ref.append(f"- {day_str} (Today)")
+        elif i == 1:
+            calendar_ref.append(f"- {day_str} (Tomorrow)")
+        else:
+            calendar_ref.append(f"- {day_str}")
+    calendar_ref_str = "\n".join(calendar_ref)
+
     dynamic_system_prompt = (
         SYSTEM_PROMPT + 
         f"\n\nCURRENT DATE-TIME CONTEXT:\n"
@@ -623,6 +848,11 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], 
         f"- User Timezone: {tz_formatted}\n"
         f"- Ensure all new tasks created use the correct year, month, and day matching the current context unless a future date is explicitly requested.\n"
         f"- Timezone Guideline: You MUST specify task start_time and end_time ISO strings using the same timezone offset suffix as the user's timezone ({tz_suffix}) instead of defaulting to UTC 'Z' (unless the user's timezone is UTC itself). This ensures scheduled blocks appear at the correct local hour on the user's timeline interface.\n"
+        f"\nCALENDAR REFERENCE LOOKUP MAP (NEXT 14 DAYS):\n"
+        f"{calendar_ref_str}\n"
+        f"\nIMPORTANT AGENTIC TOOL INSTRUCTION:\n"
+        f"- If your model does not natively support the API-level tool calling, you MUST call tools by outputting the tag at the end of your response: <tool_call name=\"tool_name\">{{\"arg1\": \"value1\", ...}}</tool_call>\n"
+        f"- You can execute multiple tool calls sequentially or in parallel. Do NOT output any explanation or conversational text inside or after the tool calls. Put all conversational responses before the tool calls.\n"
     )
     
     messages = [{"role": "system", "content": dynamic_system_prompt}]
@@ -645,7 +875,7 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], 
             return
             
         payload = {
-            "model": MODEL_NAME,
+            "model": get_selected_model(),
             "messages": current_messages,
             "tools": TOOL_SCHEMAS,
             "stream": True,
@@ -660,9 +890,10 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], 
                 method="POST"
             )
             
-            with urllib.request.urlopen(req) as resp:
+            with urllib.request.urlopen(req, timeout=30) as resp:
                 in_thought_block = False
                 assistant_message = None
+                yielded_text_len = 0
                 
                 for line in resp:
                     if not line:
@@ -697,13 +928,61 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], 
                                 yield ("thought", parts[0])
                                 in_thought_block = False
                                 if len(parts) > 1:
-                                    yield ("text", parts[1].replace("text\n", ""))
+                                    text_part = parts[1].replace("text\n", "")
+                                    if assistant_message and "content" in assistant_message:
+                                        full_content = assistant_message["content"]
+                                        tool_call_start = full_content.find("<tool_call")
+                                        if tool_call_start == -1:
+                                            yield ("text", text_part)
+                                            yielded_text_len = len(full_content)
+                                        else:
+                                            safe_to_yield_len = tool_call_start - yielded_text_len
+                                            if safe_to_yield_len > 0:
+                                                yield ("text", text_part[:safe_to_yield_len])
+                                            yielded_text_len = tool_call_start
+                                    else:
+                                        yield ("text", text_part)
                             else:
                                 yield ("thought", content)
                         else:
-                            yield ("text", content)
+                            if assistant_message and "content" in assistant_message:
+                                full_content = assistant_message["content"]
+                                tool_call_start = full_content.find("<tool_call")
+                                if tool_call_start == -1:
+                                    yield ("text", content)
+                                    yielded_text_len = len(full_content)
+                                else:
+                                    safe_to_yield_len = tool_call_start - yielded_text_len
+                                    if safe_to_yield_len > 0:
+                                        yield ("text", content[:safe_to_yield_len])
+                                    yielded_text_len = tool_call_start
+                            else:
+                                yield ("text", content)
                 
-                # Check for Tool Call requests
+                # Check for Tool Call requests (including fallback text-based tool calls)
+                import re
+                if assistant_message:
+                    content_str = assistant_message.get("content", "")
+                    matches = re.findall(r'<tool_call\s+name="(\w+)">([\s\S]*?)</tool_call>', content_str)
+                    if matches:
+                        if "tool_calls" not in assistant_message or not assistant_message["tool_calls"]:
+                            assistant_message["tool_calls"] = []
+                        for func_name, args_str in matches:
+                            if any(tc.get("function", {}).get("name") == func_name for tc in assistant_message["tool_calls"]):
+                                continue
+                            try:
+                                func_args = json.loads(args_str.strip())
+                                assistant_message["tool_calls"].append({
+                                    "id": f"call_{int(time.time() * 1050)}",
+                                    "type": "function",
+                                    "function": {
+                                        "name": func_name,
+                                        "arguments": func_args
+                                    }
+                                })
+                            except Exception as parse_err:
+                                logger.warning(f"Failed to parse text-based tool call args for {func_name}: {parse_err}")
+                
                 if assistant_message and assistant_message.get("tool_calls"):
                     current_messages.append(assistant_message)
                     

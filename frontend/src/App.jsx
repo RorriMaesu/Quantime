@@ -106,6 +106,8 @@ export default function App() {
   const [isVoiceActive, setIsVoiceActive] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState("idle"); // 'idle', 'recording', 'thinking', 'speaking'
   const [voiceChoice, setVoiceChoice] = useState("custom_cloned");
+  const [llmModel, setLlmModel] = useState("gemma4-agent-mtp");
+  const [availableModels, setAvailableModels] = useState(["gemma4-agent-mtp"]);
   const [showVoiceCloningDrawer, setShowVoiceCloningDrawer] = useState(false);
   const [isCloningRecording, setIsCloningRecording] = useState(false);
   const [cloningAudioBlob, setCloningAudioBlob] = useState(null);
@@ -237,19 +239,74 @@ export default function App() {
     }
   };
 
+  const voiceMediaRecorderRef = useRef(null);
+
   const startVoiceChat = async () => {
     try {
       const wsUrl = `ws://${window.location.hostname}:8000/api/voice-chat`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       
-      ws.onopen = () => {
+      ws.onopen = async () => {
         console.log("Voice WebSocket connected.");
         setIsVoiceActive(true);
         setVoiceStatus("recording");
         setActiveVoiceText("");
         setActiveVoiceThoughts("");
         setVoiceError("");
+        
+        // Start offline audio recorder streaming binary PCM data to backend
+        try {
+          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const audioCtx = audioContextRef.current || new (window.AudioContext || window.webkitAudioContext)();
+          if (!audioContextRef.current) {
+            audioContextRef.current = audioCtx;
+          }
+          
+          const source = audioCtx.createMediaStreamSource(micStream);
+          // Process audio in 4096-sample blocks (16kHz mono)
+          const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+          
+          source.connect(processor);
+          processor.connect(audioCtx.destination);
+          
+          voiceMediaRecorderRef.current = {
+            stream: micStream,
+            source: source,
+            processor: processor
+          };
+          
+          // Re-sample mic input (usually 44.1kHz or 48kHz) to 16kHz mono PCM for faster-whisper/speech_recognition
+          processor.onaudioprocess = (e) => {
+            if (ws.readyState !== WebSocket.OPEN || isPlayingRef.current) return;
+            
+            const inputData = e.inputBuffer.getChannelData(0);
+            
+            // Re-sample to 16kHz
+            const originalSampleRate = audioCtx.sampleRate;
+            const targetSampleRate = 16000;
+            const ratio = originalSampleRate / targetSampleRate;
+            const targetLength = Math.round(inputData.length / ratio);
+            
+            const int16Buffer = new Int16Array(targetLength);
+            for (let i = 0; i < targetLength; i++) {
+              const originalIndex = Math.round(i * ratio);
+              if (originalIndex < inputData.length) {
+                // Scale Float32 [-1, 1] to Int16 [-32768, 32767]
+                const sample = Math.max(-1, Math.min(1, inputData[originalIndex]));
+                int16Buffer[i] = sample < 0 ? sample * 32768 : sample * 32767;
+              }
+            }
+            
+            // Send binary PCM frames to WebSocket
+            if (ws.readyState === WebSocket.OPEN && !isPlayingRef.current) {
+              ws.send(int16Buffer.buffer);
+            }
+          };
+        } catch (recorderErr) {
+          console.warn("Local mic recording streaming initialization failed:", recorderErr);
+        }
+        
         startSpeechRecognition();
       };
       
@@ -456,6 +513,18 @@ export default function App() {
     setIsVoiceActive(false);
     setVoiceStatus("idle");
     stopAudioPlayback();
+    
+    if (voiceMediaRecorderRef.current) {
+      const { stream, source, processor } = voiceMediaRecorderRef.current;
+      try {
+        if (source) source.disconnect();
+        if (processor) processor.disconnect();
+        if (stream) stream.getTracks().forEach(track => track.stop());
+      } catch (e) {
+        console.error("Error cleaning up microphone streams:", e);
+      }
+      voiceMediaRecorderRef.current = null;
+    }
     
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch(e){}
@@ -743,6 +812,7 @@ export default function App() {
           setNotificationOnStart(data.notification_on_start === 'true');
           setNotificationDndFocus(data.notification_dnd_focus === 'true');
           setVoiceChoice(data.voice_choice || "custom_cloned");
+          setLlmModel(data.llm_model || "gemma4-agent-mtp");
           setChats(prev => prev.map(c => {
             if (c.id === 'welcome') {
               return {
@@ -755,6 +825,20 @@ export default function App() {
         }
       } catch (e) {
         console.error("Failed to load user profile", e);
+      }
+    };
+
+    const fetchModels = async () => {
+      try {
+        const resp = await fetch(`/api/models`);
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.models && data.models.length > 0) {
+            setAvailableModels(data.models);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load Ollama models", e);
       }
     };
     
@@ -774,6 +858,7 @@ export default function App() {
 
     checkSetupStatus();
     fetchProfile();
+    fetchModels();
     fetchInitialChats();
   }, []);
 
@@ -815,7 +900,7 @@ export default function App() {
     }
   };
 
-  const saveNotificationSettings = async (enabled, leadMins, onStart, dndFocus, voice = voiceChoice) => {
+  const saveNotificationSettings = async (enabled, leadMins, onStart, dndFocus, voice = voiceChoice, model = llmModel) => {
     try {
       await fetch(`/api/profile`, {
         method: 'POST',
@@ -829,7 +914,8 @@ export default function App() {
           notification_lead_minutes: String(leadMins),
           notification_on_start: onStart ? 'true' : 'false',
           notification_dnd_focus: dndFocus ? 'true' : 'false',
-          voice_choice: voice
+          voice_choice: voice,
+          llm_model: model
         })
       });
     } catch (e) {
@@ -1906,6 +1992,27 @@ export default function App() {
                           <Volume2 className="h-3 w-3" />
                           <span>Clone My Voice</span>
                         </button>
+                      </div>
+                    </div>
+
+                    <div className="border-t border-gray-800/80 pt-2 mt-2">
+                      <div className="px-2 py-1 text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
+                        LLM Model
+                      </div>
+                      <div className="mt-1 px-1">
+                        <select 
+                          value={llmModel}
+                          onChange={async (e) => {
+                            const val = e.target.value;
+                            setLlmModel(val);
+                            await saveNotificationSettings(notificationsEnabled, notificationLeadMinutes, notificationOnStart, notificationDndFocus, voiceChoice, val);
+                          }}
+                          className="w-full bg-gray-900 border border-gray-805 text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-indigo-550 text-gray-250 font-medium"
+                        >
+                          {availableModels.map(model => (
+                            <option key={model} value={model}>🤖 {model}</option>
+                          ))}
+                        </select>
                       </div>
                     </div>
 

@@ -23,7 +23,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from backend.database import init_db, get_db_connection, circuit_breaker, FirestoreThrottlingException
 from backend.google_client import GoogleOAuthManager, GoogleCalendarSync, GmailParser
 from backend.ollama_agent import generate_agent_stream, modify_task_time, get_current_schedule
-from backend.voice_processor import pcm_to_wav, synthesize_text_to_pcm, SimpleSilenceDetector
+from backend.voice_processor import pcm_to_wav, synthesize_text_to_pcm, SimpleSilenceDetector, get_tts_pipeline, get_vibevoice_pipeline
+from backend.voice_stt import LocalSpeechToText
 
 logger = logging.getLogger("quantime.gateway")
 logging.basicConfig(level=logging.INFO)
@@ -49,9 +50,21 @@ async def startup_event():
     def preload_model():
         import urllib.request
         import json
+        selected_model = "gemma4-agent-mtp"
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM user_profiles WHERE key = 'llm_model'")
+            row = cursor.fetchone()
+            if row and row["value"]:
+                selected_model = row["value"]
+            conn.close()
+        except Exception as db_err:
+            logger.warning(f"Could not read selected model from database for preheating: {db_err}")
+
         try:
             url = "http://localhost:11434/api/generate"
-            payload = {"model": "gemma4-agent-mtp", "keep_alive": -1}
+            payload = {"model": selected_model, "keep_alive": -1}
             req = urllib.request.Request(
                 url,
                 data=json.dumps(payload).encode("utf-8"),
@@ -60,9 +73,23 @@ async def startup_event():
             )
             with urllib.request.urlopen(req, timeout=30) as resp:
                 resp.read()
-            logger.info("Ollama model pre-loaded successfully in VRAM.")
+            logger.info(f"Ollama model '{selected_model}' pre-loaded successfully in VRAM.")
         except Exception as e:
-            logger.warning(f"Failed to pre-load Ollama model: {e}")
+            logger.warning(f"Failed to pre-load Ollama model '{selected_model}': {e}")
+
+        # Pre-load Kokoro
+        try:
+            get_tts_pipeline()
+            logger.info("Kokoro pre-loaded successfully.")
+        except Exception as e:
+            logger.warning(f"Failed to pre-load Kokoro: {e}")
+            
+        # Pre-load VibeVoice Realtime TTS
+        try:
+            get_vibevoice_pipeline()
+            logger.info("VibeVoice Realtime TTS pre-loaded successfully.")
+        except Exception as e:
+            logger.warning(f"Failed to pre-load VibeVoice Realtime TTS: {e}")
 
     import threading
     threading.Thread(target=preload_model, daemon=True).start()
@@ -384,6 +411,7 @@ class ProfileSchema(BaseModel):
     notification_on_start: Optional[str] = 'true'
     notification_dnd_focus: Optional[str] = 'true'
     voice_choice: Optional[str] = 'custom_cloned'
+    llm_model: Optional[str] = 'gemma4-agent-mtp'
 
 @app.get("/api/profile")
 def get_user_profile():
@@ -410,6 +438,8 @@ def get_user_profile():
         nd_row = cursor.fetchone()
         cursor.execute("SELECT value FROM user_profiles WHERE key = 'voice_choice'")
         voice_row = cursor.fetchone()
+        cursor.execute("SELECT value FROM user_profiles WHERE key = 'llm_model'")
+        model_row = cursor.fetchone()
         
         u_id = id_row["value"] if id_row else os.environ.get("USER_ID", "user")
         u_name = name_row["value"] if name_row else os.environ.get("USER_NAME", "User")
@@ -422,7 +452,8 @@ def get_user_profile():
             "notification_lead_minutes": nl_row["value"] if nl_row else '15',
             "notification_on_start": ns_row["value"] if ns_row else 'true',
             "notification_dnd_focus": nd_row["value"] if nd_row else 'true',
-            "voice_choice": voice_row["value"] if voice_row else 'custom_cloned'
+            "voice_choice": voice_row["value"] if voice_row else 'custom_cloned',
+            "llm_model": model_row["value"] if model_row else 'gemma4-agent-mtp'
         }
     except Exception as e:
         return {
@@ -434,6 +465,7 @@ def get_user_profile():
             "notification_on_start": "true",
             "notification_dnd_focus": "true",
             "voice_choice": "custom_cloned",
+            "llm_model": "gemma4-agent-mtp",
             "error": str(e)
         }
     finally:
@@ -457,6 +489,8 @@ def update_user_profile(profile: ProfileSchema):
             cursor.execute("INSERT OR REPLACE INTO user_profiles (key, value) VALUES ('notification_dnd_focus', ?)", (profile.notification_dnd_focus,))
         if profile.voice_choice is not None:
             cursor.execute("INSERT OR REPLACE INTO user_profiles (key, value) VALUES ('voice_choice', ?)", (profile.voice_choice,))
+        if profile.llm_model is not None:
+            cursor.execute("INSERT OR REPLACE INTO user_profiles (key, value) VALUES ('llm_model', ?)", (profile.llm_model,))
         conn.commit()
         return {
             "status": "success",
@@ -466,13 +500,32 @@ def update_user_profile(profile: ProfileSchema):
             "notification_lead_minutes": profile.notification_lead_minutes,
             "notification_on_start": profile.notification_on_start,
             "notification_dnd_focus": profile.notification_dnd_focus,
-            "voice_choice": profile.voice_choice
+            "voice_choice": profile.voice_choice,
+            "llm_model": profile.llm_model
         }
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=400, detail=f"Database update failed: {e}")
     finally:
         conn.close()
+
+@app.get("/api/models")
+def get_ollama_models():
+    """Queries the local Ollama registry to retrieve all currently installed models."""
+    import urllib.request
+    import json
+    try:
+        req = urllib.request.Request("http://localhost:11434/api/tags", method="GET")
+        with urllib.request.urlopen(req, timeout=2.5) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode("utf-8"))
+                models = [m["name"] for m in data.get("models", [])]
+                return {"status": "success", "models": models}
+            else:
+                return {"status": "error", "message": f"Ollama returned status {resp.status}", "models": ["gemma4-agent-mtp"]}
+    except Exception as e:
+        logger.error(f"Failed to query Ollama models: {e}")
+        return {"status": "error", "message": str(e), "models": ["gemma4-agent-mtp"]}
 
 from fastapi import File, UploadFile
 import shutil
@@ -1197,17 +1250,43 @@ async def voice_chat_websocket(websocket: WebSocket):
     
     interrupt_event = asyncio.Event()
     assistant_speaking = False
+    stt = LocalSpeechToText()
+    silence_detector = SimpleSilenceDetector(sample_rate=16000, silence_threshold=0.015, silence_duration_sec=1.2)
+    audio_buffer = bytearray()
     
     async def receive_loop():
-        nonlocal assistant_speaking
+        nonlocal assistant_speaking, audio_buffer
         try:
             while True:
                 message = await websocket.receive()
                 
                 if "bytes" in message:
-                    # Ignore binary audio stream since we use browser-native speech recognition
-                    continue
+                    pcm_chunk = message["bytes"]
+                    audio_buffer.extend(pcm_chunk)
+                    
+                    # If assistant is speaking and the user starts talking, trigger barge-in/interrupt
+                    # Silence detector has_spoken checks if energy threshold is exceeded
+                    is_silent = silence_detector.is_silence(pcm_chunk)
+                    
+                    if silence_detector.has_spoken and assistant_speaking:
+                        logger.info("Speech energy detected while assistant was speaking. Barging in...")
+                        interrupt_event.set()
                         
+                    if is_silent:
+                        logger.info("Silence detected. Transcribing audio buffer...")
+                        # Extract full recorded audio pcm
+                        captured_audio = bytes(audio_buffer)
+                        audio_buffer.clear()
+                        silence_detector.reset()
+                        
+                        # Run transcription in separate thread to prevent blocking event loop
+                        loop = asyncio.get_running_loop()
+                        transcribed_text = await loop.run_in_executor(None, stt.transcribe_pcm, captured_audio, 16000)
+                        
+                        if transcribed_text:
+                            logger.info(f"Local STT transcribed: {transcribed_text}")
+                            asyncio.create_task(run_agent_turn(transcribed_text))
+                            
                 elif "text" in message:
                     try:
                         msg_json = json.loads(message["text"])
@@ -1239,7 +1318,7 @@ async def voice_chat_websocket(websocket: WebSocket):
         await websocket.send_json({"type": "status", "status": "thinking"})
         
         text_buffer = ""
-        sentence_buffer = ""
+        last_split_index = 0
         
         chunk_queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
@@ -1270,26 +1349,38 @@ async def voice_chat_websocket(websocket: WebSocket):
                     
                 if channel == "text":
                     text_buffer += chunk
-                    sentence_buffer += chunk
                     await websocket.send_json({"type": "text", "text": chunk})
                     
-                    if any(char in sentence_buffer for char in [".", "?", "!", "\n"]) and len(sentence_buffer.strip()) > 5:
-                        clean_sentence = sentence_buffer.strip()
-                        sentence_buffer = ""
-                        
-                        voice_choice = get_user_profile_value('voice_choice', 'custom_cloned')
-                        pcm_bytes = synthesize_text_to_pcm(clean_sentence, voice=voice_choice)
-                        if pcm_bytes:
-                            if interrupt_event.is_set():
-                                break
-                            pcm_b64 = base64.b64encode(pcm_bytes).decode("utf-8")
-                            await websocket.send_json({"type": "audio", "audio": pcm_b64})
+                    import re
+                    ignored_endings = ("a.m.", "p.m.", "e.g.", "i.e.", "vs.", "mr.", "mrs.", "dr.", "ms.")
+                    slice_start = last_split_index
+                    current_slice = text_buffer[slice_start:]
+                    boundaries = list(re.finditer(r'(.+?[.!?])(?:\s+|\n+|$)', current_slice))
+                    for m in boundaries:
+                        candidate = m.group(1).strip()
+                        is_abbreviation = False
+                        if candidate.lower().endswith(ignored_endings):
+                            is_abbreviation = True
+                        elif re.search(r'\b[a-zA-Z]\.$', candidate):
+                            is_abbreviation = True
+                            
+                        if not is_abbreviation and len(candidate) > 5:
+                            last_split_index = slice_start + m.end()
+                            
+                            voice_choice = get_user_profile_value('voice_choice', 'custom_cloned')
+                            pcm_bytes = await asyncio.to_thread(synthesize_text_to_pcm, candidate, voice=voice_choice)
+                            if pcm_bytes:
+                                if interrupt_event.is_set():
+                                    break
+                                pcm_b64 = base64.b64encode(pcm_bytes).decode("utf-8")
+                                await websocket.send_json({"type": "audio", "audio": pcm_b64})
                 elif channel == "thought":
                     await websocket.send_json({"type": "thought", "thought": chunk})
                             
-            if sentence_buffer.strip() and not interrupt_event.is_set():
+            remainder = text_buffer[last_split_index:].strip()
+            if remainder and not interrupt_event.is_set():
                 voice_choice = get_user_profile_value('voice_choice', 'custom_cloned')
-                pcm_bytes = synthesize_text_to_pcm(sentence_buffer.strip(), voice=voice_choice)
+                pcm_bytes = await asyncio.to_thread(synthesize_text_to_pcm, remainder, voice=voice_choice)
                 if pcm_bytes:
                     pcm_b64 = base64.b64encode(pcm_bytes).decode("utf-8")
                     await websocket.send_json({"type": "audio", "audio": pcm_b64})
