@@ -123,7 +123,36 @@ def generate_voice_preset(wav_path: str, preset_out_path: str):
     device = next(model.parameters()).device
     dtype = next(model.parameters()).dtype
     
-    wav, sr = librosa.load(wav_path, sr=24000)
+    import tempfile
+    import subprocess
+    import imageio_ffmpeg
+    
+    # Transcode incoming audio (m4a, webm, wav, mp3, etc.) to 24kHz mono PCM WAV for librosa
+    temp_wav_fd, temp_wav_path = tempfile.mkstemp(suffix=".wav")
+    os.close(temp_wav_fd)
+    
+    try:
+        cmd = [
+            imageio_ffmpeg.get_ffmpeg_exe(),
+            "-y",
+            "-i", wav_path,
+            "-acodec", "pcm_s16le",
+            "-ar", "24000",
+            "-ac", "1",
+            temp_wav_path
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            raise RuntimeError(f"FFmpeg audio transcoding failed: {res.stderr}")
+            
+        wav, sr = librosa.load(temp_wav_path, sr=24000)
+    finally:
+        if os.path.exists(temp_wav_path):
+            try:
+                os.remove(temp_wav_path)
+            except Exception:
+                pass
+
     if processor.db_normalize and processor.audio_normalizer:
         wav = processor.audio_normalizer(wav)
         

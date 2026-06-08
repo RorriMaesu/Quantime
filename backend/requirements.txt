@@ -16,3 +16,4 @@ torchaudio>=2.0.0
 kokoro>=0.1.0
 silero-vad>=1.0.0
 python-multipart>=0.0.7
+imageio-ffmpeg>=0.4.9
