@@ -146,7 +146,8 @@ export default function App() {
       };
       
       recorder.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+        const mimeType = recorder.mimeType || 'audio/webm';
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
         setCloningAudioBlob(audioBlob);
         stream.getTracks().forEach(track => track.stop());
       };
