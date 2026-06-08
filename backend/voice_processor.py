@@ -10,6 +10,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("quantime.voice_processor")
 
+# Set programmatic ProgramData shared HF_HOME default on Windows if not already set
+if platform.system() == "Windows" and not os.environ.get("HF_HOME"):
+    program_data = os.environ.get("ProgramData") or os.environ.get("ALLUSERSPROFILE") or "C:\\ProgramData"
+    os.environ["HF_HOME"] = os.path.abspath(os.path.join(program_data, "Quantime", "hf_cache"))
+
 # On Windows, when run under background environments (like Task Scheduler/VBScript/Installer),
 # user environment variables (such as custom HF_HOME or OLLAMA_MODELS) may be missing or default to the Admin profile.
 # We restore them directly from the registry to ensure offline caches are resolved correctly.

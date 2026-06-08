@@ -1,7 +1,12 @@
-# backend/app.py
 import os
 import sys
 import time
+import platform
+
+# Set programmatic ProgramData shared HF_HOME default on Windows if not already set
+if platform.system() == "Windows" and not os.environ.get("HF_HOME"):
+    program_data = os.environ.get("ProgramData") or os.environ.get("ALLUSERSPROFILE") or "C:\\ProgramData"
+    os.environ["HF_HOME"] = os.path.abspath(os.path.join(program_data, "Quantime", "hf_cache"))
 import asyncio
 import logging
 import urllib.request
