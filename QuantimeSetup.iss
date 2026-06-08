@@ -4,7 +4,7 @@
 [Setup]
 AppId={{D37E618A-706E-45E4-A159-4E6DF9B53A04}}
 AppName=Quantime
-AppVersion=1.3.10
+AppVersion=1.3.11
 AppPublisher=RorriMaesu
 DefaultDirName={userpf}\Quantime
 DefaultGroupName=Quantime
@@ -74,9 +74,11 @@ var
   Content: String;
   PctStr: String;
   MsgStr: String;
+  CleanPctStr: String;
   DelimiterPos: Integer;
   IsDone: Boolean;
   LoopsCount: Integer;
+  i: Integer;
 begin
   if CurStep = ssPostInstall then
   begin
@@ -117,6 +119,14 @@ begin
             
             MsgStr := Trim(MsgStr);
             PctStr := Trim(PctStr);
+
+            CleanPctStr := '';
+            for i := 1 to Length(PctStr) do
+            begin
+              if (PctStr[i] >= '0') and (PctStr[i] <= '9') then
+                CleanPctStr := CleanPctStr + PctStr[i];
+            end;
+            PctStr := CleanPctStr;
 
             // Update status text and progress bar position in native installer UI
             WizardForm.StatusLabel.Caption := MsgStr;

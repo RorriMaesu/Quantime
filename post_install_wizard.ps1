@@ -15,7 +15,7 @@ function Write-ProgressUpdate ($pct, $msg) {
         New-Item -ItemType Directory -Force -Path $progressDir | Out-Null
     }
     $progressFile = Join-Path $progressDir "install_progress.txt"
-    "$pct|$msg" | Out-File -FilePath $progressFile -Force -Encoding utf8
+    [System.IO.File]::WriteAllText($progressFile, "$pct|$msg", (New-Object System.Text.UTF8Encoding $false))
 }
 
 # Helper functions for detection
