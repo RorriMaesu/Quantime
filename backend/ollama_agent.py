@@ -57,7 +57,7 @@ def get_current_schedule(start_date: str, end_date: str) -> List[Dict[str, Any]]
     cursor = conn.cursor()
     try:
         cursor.execute("""
-            SELECT id, title, description, start_time, end_time, energy_level, constraint_type, status, source_event_id
+            SELECT id, title, description, start_time, end_time, energy_level, constraint_type, status, source_event_id, recurrence_group_id, recurrence_rule
             FROM tasks 
             WHERE substr(start_time, 1, 10) >= ? AND substr(start_time, 1, 10) <= ?
         """, (d_start, d_end))
@@ -147,13 +147,12 @@ def check_overlaps(exclude_task_id: Optional[str], start_time: str, end_time: st
         conn.close()
     return conflicts
 
-def modify_task_time(task_id: str, new_start: str, new_end: str, ignore_conflicts: bool = False) -> Dict[str, Any]:
+def modify_task_time(task_id: str, new_start: str, new_end: str, ignore_conflicts: bool = False, target: str = "single") -> Dict[str, Any]:
     """
-    Mutates a local task's scheduling bounds.
-    Critical Constraint: Aborts immediately if target task is marked as a HARD constraint.
+    Mutates a local task's scheduling bounds. Supports shifting an entire recurrence series relatively.
     """
     task_id = resolve_task_id(task_id)
-    logger.info(f"Ollama Agent executing: modify_task_time({task_id}, {new_start}, {new_end}, ignore_conflicts={ignore_conflicts})")
+    logger.info(f"Ollama Agent executing: modify_task_time({task_id}, {new_start}, {new_end}, ignore_conflicts={ignore_conflicts}, target={target})")
     
     import datetime
     try:
@@ -167,43 +166,86 @@ def modify_task_time(task_id: str, new_start: str, new_end: str, ignore_conflict
     except Exception as e:
         logger.error(f"Error checking new_start bounds: {e}")
 
-    # Check for overlapping scheduling conflicts
-    if not ignore_conflicts:
-        conflicts = check_overlaps(task_id, new_start, new_end)
-        if conflicts:
-            conflict_names = ", ".join([f"'{c['title']}' ({c['start_time']} - {c['end_time']})" for c in conflicts])
-            return {
-                "status": "error",
-                "message": f"Conflict: The requested slot overlaps with existing tasks: {conflict_names}. "
-                           f"To force this change, set ignore_conflicts=True, or call calculate_schedule_proposals to reschedule."
-            }
-
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
-        cursor.execute("SELECT id, title, constraint_type, source_event_id FROM tasks WHERE id = ?", (task_id,))
+        cursor.execute("SELECT id, title, constraint_type, source_event_id, start_time, end_time, recurrence_group_id FROM tasks WHERE id = ?", (task_id,))
         task = cursor.fetchone()
         
         if not task:
             raise ValueError(f"Target task with ID '{task_id}' does not exist.")
             
         if task["constraint_type"] == "hard":
-            # Throw clear error to prevent model from rescheduling rigid elements
             raise PermissionError(
                 f"IMMUTABLE CONSTRAINT CONFLICT: Task '{task['title']}' (ID: {task_id}) is flagged "
-                "as a HARD constraint (e.g. Google Calendar Sync/Class schedule). This task cannot be "
-                "shifted automatically by the orchestrator. Manual bypass or user intervention is required."
+                "as a HARD constraint. This task cannot be shifted automatically."
             )
             
-        # Perform Local Mutation
+        if target == "series" and task["recurrence_group_id"]:
+            rec_group = task["recurrence_group_id"]
+            orig_start_dt = datetime.datetime.fromisoformat(task["start_time"].replace('Z', '+00:00'))
+            new_start_dt = datetime.datetime.fromisoformat(new_start.replace('Z', '+00:00'))
+            delta = new_start_dt - orig_start_dt
+            
+            cursor.execute("SELECT id, title, start_time, end_time, source_event_id, constraint_type FROM tasks WHERE recurrence_group_id = ?", (rec_group,))
+            series_tasks = [dict(r) for r in cursor.fetchall()]
+            
+            # Precheck constraints and overlaps
+            for t in series_tasks:
+                if t["constraint_type"] == "hard":
+                    raise PermissionError(f"IMMUTABLE CONSTRAINT CONFLICT: Task '{t['title']}' is a HARD constraint. Series shift aborted.")
+                
+                t_start = datetime.datetime.fromisoformat(t["start_time"].replace('Z', '+00:00'))
+                t_end = datetime.datetime.fromisoformat(t["end_time"].replace('Z', '+00:00'))
+                t_new_start = (t_start + delta).isoformat().replace('+00:00', 'Z')
+                t_new_end = (t_end + delta).isoformat().replace('+00:00', 'Z')
+                
+                if not ignore_conflicts:
+                    conflicts = check_overlaps(t["id"], t_new_start, t_new_end)
+                    if conflicts:
+                        conflict_names = ", ".join([f"'{c['title']}'" for c in conflicts])
+                        return {
+                            "status": "error",
+                            "message": f"Conflict: Shifted series slot for '{t['title']}' overlaps with {conflict_names}."
+                        }
+            
+            # Commit the updates
+            for t in series_tasks:
+                t_start = datetime.datetime.fromisoformat(t["start_time"].replace('Z', '+00:00'))
+                t_end = datetime.datetime.fromisoformat(t["end_time"].replace('Z', '+00:00'))
+                t_new_start = (t_start + delta).isoformat().replace('+00:00', 'Z')
+                t_new_end = (t_end + delta).isoformat().replace('+00:00', 'Z')
+                
+                cursor.execute("""
+                    UPDATE tasks 
+                    SET start_time = ?, end_time = ?, updated_at = ? 
+                    WHERE id = ?
+                """, (t_new_start, t_new_end, time.time(), t["id"]))
+                
+                if t["source_event_id"]:
+                    GoogleCalendarSync.patch_calendar_event(t["source_event_id"], t_new_start, t_new_end, t["title"])
+            
+            conn.commit()
+            return {"status": "success", "message": f"Successfully shifted all tasks in recurring series '{task['title']}' by {delta}."}
+
+        # Check single task overlaps
+        if not ignore_conflicts:
+            conflicts = check_overlaps(task_id, new_start, new_end)
+            if conflicts:
+                conflict_names = ", ".join([f"'{c['title']}' ({c['start_time']} - {c['end_time']})" for c in conflicts])
+                return {
+                    "status": "error",
+                    "message": f"Conflict: The requested slot overlaps with existing tasks: {conflict_names}. "
+                               f"To force this change, set ignore_conflicts=True, or call calculate_schedule_proposals to reschedule."
+                }
+
         cursor.execute("""
             UPDATE tasks 
             SET start_time = ?, end_time = ?, updated_at = ? 
             WHERE id = ?
         """, (new_start, new_end, time.time(), task_id))
         
-        # If it carries a Google Calendar Sync Event ID, push changes back to the API
         sync_status = "Local SQLite update successful."
         if task["source_event_id"]:
             success = GoogleCalendarSync.patch_calendar_event(task["source_event_id"], new_start, new_end, task["title"])
@@ -527,21 +569,26 @@ def delete_task(task_id: str) -> Dict[str, Any]:
     finally:
         conn.close()
 
-def update_task_metadata(task_id: str, title: Optional[str] = None, description: Optional[str] = None, energy_level: Optional[str] = None, constraint_type: Optional[str] = None) -> Dict[str, Any]:
+def update_task_metadata(task_id: str, title: Optional[str] = None, description: Optional[str] = None, energy_level: Optional[str] = None, constraint_type: Optional[str] = None, target: str = "single") -> Dict[str, Any]:
     """
-    Updates an existing task's metadata, such as its title (renaming), description (adding/updating notes), energy_level, or constraint_type.
+    Updates an existing task's metadata (or entire series' metadata) locally and mirrors to Firestore.
     """
     task_id = resolve_task_id(task_id)
-    logger.info(f"Ollama Agent executing: update_task_metadata(task_id={task_id}, title={title}, description={description})")
+    logger.info(f"Ollama Agent executing: update_task_metadata(task_id={task_id}, title={title}, description={description}, target={target})")
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
         # Check if the task exists
-        cursor.execute("SELECT id, title, description, energy_level, constraint_type FROM tasks WHERE id = ?", (task_id,))
+        cursor.execute("SELECT id, title, description, energy_level, constraint_type, recurrence_group_id FROM tasks WHERE id = ?", (task_id,))
         task = cursor.fetchone()
         if not task:
             raise ValueError(f"Task with ID '{task_id}' not found.")
             
+        tasks_to_update = [task_id]
+        if target == "series" and task["recurrence_group_id"]:
+            cursor.execute("SELECT id FROM tasks WHERE recurrence_group_id = ?", (task["recurrence_group_id"],))
+            tasks_to_update = [r["id"] for r in cursor.fetchall()]
+
         # Build dynamic SQL update fields
         fields = []
         params = []
@@ -562,16 +609,17 @@ def update_task_metadata(task_id: str, title: Optional[str] = None, description:
         if not fields:
             return {"status": "success", "message": "No updates specified."}
             
-        params.append(task_id)
         update_query = f"UPDATE tasks SET {', '.join(fields)}, updated_at = {time.time()} WHERE id = ?"
-        cursor.execute(update_query, tuple(params))
+        
+        for tid in tasks_to_update:
+            cursor.execute(update_query, tuple(params + [tid]))
+            
         conn.commit()
         
         # Mirror metadata update to Firestore
         try:
             from backend.app import db_firestore, MOCK_USER_ID
             if db_firestore is not None:
-                task_ref = db_firestore.collection("users").document(MOCK_USER_ID).collection("tasks").document(task_id)
                 update_data = {}
                 if title is not None:
                     update_data["title"] = title
@@ -582,11 +630,13 @@ def update_task_metadata(task_id: str, title: Optional[str] = None, description:
                 if constraint_type is not None:
                     update_data["constraint_type"] = constraint_type
                 if update_data:
-                    task_ref.update(update_data)
+                    for tid in tasks_to_update:
+                        task_ref = db_firestore.collection("users").document(MOCK_USER_ID).collection("tasks").document(tid)
+                        task_ref.update(update_data)
         except Exception as fe:
             logger.error(f"Failed to mirror task updates to Firestore: {fe}")
             
-        return {"status": "success", "message": f"Task '{task_id}' details updated successfully."}
+        return {"status": "success", "message": f"Successfully updated details for {len(tasks_to_update)} task(s)."}
     except Exception as e:
         logger.error(f"Failed to update task details: {e}")
         return {"status": "error", "message": str(e)}
@@ -961,7 +1011,8 @@ TOOL_SCHEMAS = [
                     "title": {"type": "string", "description": "The new title to rename the task to (optional)"},
                     "description": {"type": "string", "description": "The new description or notes to add/update for the task (optional)"},
                     "energy_level": {"type": "string", "enum": ["none", "crimson", "teal"], "description": "Update energy classification band (optional)"},
-                    "constraint_type": {"type": "string", "enum": ["soft", "hard"], "description": "Update priority constraint type (optional)"}
+                    "constraint_type": {"type": "string", "enum": ["soft", "hard"], "description": "Update priority constraint type (optional)"},
+                    "target": {"type": "string", "enum": ["single", "series"], "description": "Specifies whether to update this occurrence only ('single') or all occurrences in the recurring series ('series'). Defaults to 'single'."}
                 },
                 "required": ["task_id"]
             }
@@ -1007,7 +1058,8 @@ TOOL_SCHEMAS = [
                     "task_id": {"type": "string", "description": "Unique ID identifier of task"},
                     "new_start": {"type": "string", "description": "New ISO start date-time"},
                     "new_end": {"type": "string", "description": "New ISO end date-time"},
-                    "ignore_conflicts": {"type": "boolean", "description": "Set to true to force overlapping schedule times (defaults to false)"}
+                    "ignore_conflicts": {"type": "boolean", "description": "Set to true to force overlapping schedule times (defaults to false)"},
+                    "target": {"type": "string", "enum": ["single", "series"], "description": "Specifies whether to shift this occurrence only ('single') or shift all future occurrences in the recurring series relatively ('series'). Defaults to 'single'."}
                 },
                 "required": ["task_id", "new_start", "new_end"]
             }

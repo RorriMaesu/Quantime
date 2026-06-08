@@ -111,6 +111,7 @@ export default function App() {
   const [recurrencePattern, setRecurrencePattern] = useState("none");
   const [isEditing, setIsEditing] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState(null);
+  const [recurringConfirm, setRecurringConfirm] = useState({ isOpen: false, taskId: null, actionType: 'delete', payload: null });
   const [recurrenceCount, setRecurrenceCount] = useState(10);
   const [apiKey, setApiKey] = useState(() => localStorage.getItem("quantime_api_key") || "");
   const [viewMode, setViewMode] = useState("timeline"); // timeline or calendar
@@ -1157,27 +1158,19 @@ export default function App() {
         energy_level: newEnergy,
         constraint_type: newConstraint
       };
-      try {
-        const resp = await fetch(`${API_BASE}/api/tasks/${editingTaskId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(editObj)
+      
+      const currentTask = tasks.find(t => t.id === editingTaskId);
+      if (currentTask && (currentTask.recurrence_group_id || currentTask.source_event_id)) {
+        setRecurringConfirm({
+          isOpen: true,
+          taskId: editingTaskId,
+          actionType: 'edit',
+          payload: editObj
         });
-        if (resp.ok) {
-          setNewTitle("");
-          setNewDesc("");
-          setNewStart("");
-          setNewEnd("");
-          setNewEnergy("none");
-          setNewConstraint("soft");
-          setIsEditing(false);
-          setEditingTaskId(null);
-          setShowAddForm(false);
-          fetchTasks();
-        }
-      } catch (e) {
-        console.error("Failed to edit task", e);
+        return;
       }
+
+      await executeEditTask(editingTaskId, editObj, 'single');
       return;
     }
 
@@ -1217,6 +1210,30 @@ export default function App() {
     }
   };
 
+  const executeEditTask = async (taskId, editObj, target) => {
+    try {
+      const resp = await fetch(`${API_BASE}/api/tasks/${taskId}?target=${target}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editObj)
+      });
+      if (resp.ok) {
+        setNewTitle("");
+        setNewDesc("");
+        setNewStart("");
+        setNewEnd("");
+        setNewEnergy("none");
+        setNewConstraint("soft");
+        setIsEditing(false);
+        setEditingTaskId(null);
+        setShowAddForm(false);
+        fetchTasks();
+      }
+    } catch (e) {
+      console.error("Failed to edit task", e);
+    }
+  };
+
   const toLocalDatetimeString = (isoString) => {
     try {
       if (!isoString) return "";
@@ -1243,17 +1260,7 @@ export default function App() {
   };
   
 
-  const handleDeleteTask = async (taskId) => {
-    const task = tasks.find(t => t.id === taskId);
-    let target = "single";
-    if (task && (task.recurrence_group_id || task.source_event_id)) {
-      const choice = window.prompt("This is a recurring task. Type 'series' to delete the ENTIRE SERIES, or 'single' to delete ONLY THIS OCCURRENCE:", "single");
-      if (choice === null) return;
-      target = choice.trim().toLowerCase() === "series" ? "series" : "single";
-    } else {
-      if (!window.confirm("Are you sure you want to delete this task?")) return;
-    }
-    
+  const executeDeleteTask = async (taskId, target) => {
     try {
       const resp = await fetch(`${API_BASE}/api/tasks/${taskId}?target=${target}`, {
         method: 'DELETE'
@@ -1266,6 +1273,24 @@ export default function App() {
     } catch (e) {
       console.error("Failed to delete task", e);
     }
+  };
+
+  const handleDeleteTask = async (taskId) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    if (task.recurrence_group_id || task.source_event_id) {
+      setRecurringConfirm({
+        isOpen: true,
+        taskId: taskId,
+        actionType: 'delete',
+        payload: null
+      });
+      return;
+    }
+
+    if (!window.confirm(`Are you sure you want to delete "${task.title}"?`)) return;
+    await executeDeleteTask(taskId, 'single');
   };
 
   const handleCompleteTask = async (taskId, currentStatus) => {
@@ -3118,6 +3143,73 @@ export default function App() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* RECURRING TASK ACTION CONFIRM MODAL */}
+      {recurringConfirm.isOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div 
+            onClick={() => setRecurringConfirm({ isOpen: false, taskId: null, actionType: 'delete', payload: null })}
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm transition-opacity"
+          ></div>
+          
+          <div className="relative w-full max-w-md bg-gray-950 border border-gray-800 rounded-3xl p-6 space-y-5 shadow-2xl z-10 text-center float-ui">
+            <div className="mx-auto h-12 w-12 rounded-full bg-indigo-950/60 border border-indigo-900 flex items-center justify-center glow-indigo mb-2">
+              <RefreshCw className="h-5 w-5 text-indigo-400" />
+            </div>
+            
+            <div className="space-y-2">
+              <h3 className="text-lg font-bold text-gray-100">
+                {recurringConfirm.actionType === 'delete' ? "Delete Recurring Task" : "Edit Recurring Task"}
+              </h3>
+              <p className="text-xs text-gray-400 leading-relaxed">
+                This is a recurring task series. Would you like to apply this {recurringConfirm.actionType === 'delete' ? "deletion" : "modification"} to this occurrence only, or to all scheduled instances?
+              </p>
+            </div>
+            
+            <div className="flex flex-col space-y-2 pt-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  const { taskId, actionType, payload } = recurringConfirm;
+                  setRecurringConfirm({ isOpen: false, taskId: null, actionType: 'delete', payload: null });
+                  if (actionType === 'delete') {
+                    await executeDeleteTask(taskId, 'single');
+                  } else {
+                    await executeEditTask(taskId, payload, 'single');
+                  }
+                }}
+                className="w-full py-3 rounded-xl text-xs font-semibold bg-gray-900 border border-gray-800 hover:border-indigo-500 hover:bg-gray-850 text-indigo-300 transition-all focus:outline-none"
+              >
+                Apply to This Occurrence Only
+              </button>
+              
+              <button
+                type="button"
+                onClick={async () => {
+                  const { taskId, actionType, payload } = recurringConfirm;
+                  setRecurringConfirm({ isOpen: false, taskId: null, actionType: 'delete', payload: null });
+                  if (actionType === 'delete') {
+                    await executeDeleteTask(taskId, 'series');
+                  } else {
+                    await executeEditTask(taskId, payload, 'series');
+                  }
+                }}
+                className="w-full py-3 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-950 transition-all focus:outline-none"
+              >
+                Apply to Entire Recurring Series
+              </button>
+              
+              <button
+                type="button"
+                onClick={() => setRecurringConfirm({ isOpen: false, taskId: null, actionType: 'delete', payload: null })}
+                className="w-full py-2.5 text-xs text-gray-500 hover:text-gray-350 transition-all focus:outline-none"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
