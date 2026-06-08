@@ -765,7 +765,7 @@ def get_hardware_info():
     """Queries and returns host GPU name and VRAM size."""
     return get_gpu_metadata()
 
-def get_localtunnel_url() -> str:
+def get_localtunnel_url() -> Optional[str]:
     log_dir = os.path.join(os.path.expanduser("~"), ".quantime")
     log_file = os.path.join(log_dir, "localtunnel.log")
     if os.path.exists(log_file):
@@ -781,7 +781,7 @@ def get_localtunnel_url() -> str:
                             return url
         except Exception:
             pass
-    return "https://quantime-scheduler-green.loca.lt"  # Fallback
+    return None
 
 @app.get("/api/setup/status")
 def get_setup_status():

@@ -600,7 +600,7 @@ export default function App() {
   }, [selectedDate]);
   const [showMobileGuide, setShowMobileGuide] = useState(false);
   const [publicIp, setPublicIp] = useState("Loading...");
-  const [tunnelUrl, setTunnelUrl] = useState("https://quantime-scheduler-green.loca.lt");
+  const [tunnelUrl, setTunnelUrl] = useState(null);
   const [hasCredentials, setHasCredentials] = useState(true);
 
   const [isGoogleLinked, setIsGoogleLinked] = useState(false);
@@ -887,6 +887,32 @@ export default function App() {
     fetchModels();
     fetchInitialChats();
   }, []);
+
+  useEffect(() => {
+    if (!showMobileGuide || tunnelUrl) return;
+
+    let active = true;
+    const pollStatus = async () => {
+      try {
+        const resp = await fetch(`/api/setup/status`);
+        if (resp.ok && active) {
+          const data = await resp.json();
+          if (data.tunnel_url) {
+            setTunnelUrl(data.tunnel_url);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to poll tunnel status", e);
+      }
+    };
+
+    pollStatus();
+    const interval = setInterval(pollStatus, 2000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [showMobileGuide, tunnelUrl]);
 
   const fetchPublicIp = async () => {
     setPublicIp("Loading...");
@@ -2961,18 +2987,27 @@ export default function App() {
                 To access Quantime from your mobile phone and keep your calendar synchronized:
               </p>
               
-              <div className="flex flex-col items-center justify-center p-4 bg-gray-900 border border-gray-800 rounded-2xl space-y-3">
-                <div className="p-2.5 bg-white rounded-xl shadow-glow transition-transform duration-300 hover:scale-105">
-                  <img 
-                    src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(tunnelUrl)}`} 
-                    alt="Quantime Mobile Link QR Code"
-                    className="w-[140px] h-[140px] block"
-                  />
-                </div>
-                <div className="text-center">
-                  <p className="font-mono text-xs select-all text-indigo-400 font-bold">{tunnelUrl}</p>
-                  <p className="text-[10px] text-gray-500 mt-1 font-medium">Scan with your phone camera to open instantly</p>
-                </div>
+              <div className="flex flex-col items-center justify-center p-4 bg-gray-900 border border-gray-800 rounded-2xl min-h-[200px]">
+                {!tunnelUrl ? (
+                  <div className="flex flex-col items-center justify-center space-y-3 py-6">
+                    <RefreshCw className="w-8 h-8 text-indigo-500 animate-spin" />
+                    <p className="text-xs text-gray-400 font-medium">Generating secure connection link...</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center space-y-3 w-full">
+                    <div className="p-2.5 bg-white rounded-xl shadow-glow transition-transform duration-300 hover:scale-105">
+                      <img 
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(tunnelUrl)}`} 
+                        alt="Quantime Mobile Link QR Code"
+                        className="w-[140px] h-[140px] block"
+                      />
+                    </div>
+                    <div className="text-center">
+                      <p className="font-mono text-xs select-all text-indigo-400 font-bold">{tunnelUrl}</p>
+                      <p className="text-[10px] text-gray-500 mt-1 font-medium">Scan with your phone camera to open instantly</p>
+                    </div>
+                  </div>
+                )}
               </div>
               
               <div className="space-y-2">

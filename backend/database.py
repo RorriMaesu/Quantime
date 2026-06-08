@@ -204,6 +204,13 @@ def init_db(db_path: str = DB_FILE) -> None:
     cursor.execute("INSERT OR IGNORE INTO user_profiles (key, value) VALUES ('notification_lead_minutes', '15')")
     cursor.execute("INSERT OR IGNORE INTO user_profiles (key, value) VALUES ('notification_on_start', 'true')")
     cursor.execute("INSERT OR IGNORE INTO user_profiles (key, value) VALUES ('notification_dnd_focus', 'true')")
+    
+    # Seed a persistent unique tunnel subdomain if missing
+    cursor.execute("SELECT COUNT(*) FROM user_profiles WHERE key = 'tunnel_subdomain'")
+    if cursor.fetchone()[0] == 0:
+        import uuid
+        unique_sub = f"quantime-{uuid.uuid4().hex[:8]}"
+        cursor.execute("INSERT INTO user_profiles (key, value) VALUES ('tunnel_subdomain', ?)", (unique_sub,))
         
     conn.commit()
     conn.close()

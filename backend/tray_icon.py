@@ -142,6 +142,24 @@ def find_node():
         return global_node
     return "node"
 
+def get_tunnel_subdomain():
+    import sqlite3
+    db_path = os.path.join(os.path.expanduser("~"), ".quantime", "quantime.db")
+    if not os.path.exists(db_path):
+        return "quantime-scheduler-green"
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("CREATE TABLE IF NOT EXISTS user_profiles (key TEXT PRIMARY KEY, value TEXT)")
+        cursor.execute("SELECT value FROM user_profiles WHERE key = 'tunnel_subdomain'")
+        row = cursor.fetchone()
+        conn.close()
+        if row and row[0]:
+            return row[0]
+    except Exception:
+        pass
+    return "quantime-scheduler-green"
+
 def start_services():
     global fastapi_proc, vite_proc, tunnel_proc
     creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
@@ -203,12 +221,13 @@ def start_services():
     if os.path.exists(lt_js):
         tunnel_log_path = os.path.join(log_dir, "localtunnel.log")
         try:
-            tunnel_log = open(tunnel_log_path, "a")
+            tunnel_log = open(tunnel_log_path, "w")
         except Exception:
             tunnel_log = subprocess.DEVNULL
             
+        subdomain = get_tunnel_subdomain()
         tunnel_proc = subprocess.Popen(
-            [node_bin, lt_js, "--port", tunnel_port, "--subdomain", "quantime-scheduler-green", "--local-host", "127.0.0.1"],
+            [node_bin, lt_js, "--port", tunnel_port, "--subdomain", subdomain, "--local-host", "127.0.0.1"],
             cwd=os.path.join(base_dir, "frontend"),
             creationflags=creation_flags,
             stdout=tunnel_log,
@@ -304,12 +323,13 @@ def monitor_localtunnel():
             if os.path.exists(lt_js):
                 tunnel_log_path = os.path.join(log_dir, "localtunnel.log")
                 try:
-                    tunnel_log = open(tunnel_log_path, "a")
+                    tunnel_log = open(tunnel_log_path, "w")
                 except Exception:
                     tunnel_log = subprocess.DEVNULL
                     
+                subdomain = get_tunnel_subdomain()
                 tunnel_proc = subprocess.Popen(
-                    [node_bin, lt_js, "--port", port, "--subdomain", "quantime-scheduler-green", "--local-host", "127.0.0.1"],
+                    [node_bin, lt_js, "--port", port, "--subdomain", subdomain, "--local-host", "127.0.0.1"],
                     cwd=os.path.join(base_dir, "frontend"),
                     creationflags=creation_flags,
                     stdout=tunnel_log,
