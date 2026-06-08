@@ -91,7 +91,12 @@ function Get-GPUMetadata {
     }
 }
 
-Write-ProgressUpdate 0 "Starting Quantime environment configuration..."
+# Terminate any running Quantime backend processes to free files and ports for setup
+Write-ProgressUpdate 1 "Stopping any active Quantime application instances..."
+Get-Process | Where-Object { $_.Path -and ($_.Path -like "*Quantime*") } | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 1
+
+Write-ProgressUpdate 2 "Starting Quantime environment configuration..."
 
 # ---------------------------------------------------------------------
 # 1. Verify/Download Python
