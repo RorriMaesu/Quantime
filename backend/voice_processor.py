@@ -44,7 +44,20 @@ def get_vibevoice_pipeline():
             model_path = "microsoft/VibeVoice-Realtime-0.5B"
             device = "cuda" if torch.cuda.is_available() else "cpu"
             logger.info(f"Initializing VibeVoice Realtime TTS on {device}...")
-            _vibevoice_processor = VibeVoiceStreamingProcessor.from_pretrained(model_path)
+            
+            # 1. Load the Processor
+            try:
+                _vibevoice_processor = VibeVoiceStreamingProcessor.from_pretrained(model_path, local_files_only=True)
+            except Exception:
+                logger.info("VibeVoice processor not found in local cache. Attempting to fetch from HF Hub...")
+                old_offline = os.environ.get("HF_HUB_OFFLINE")
+                if old_offline:
+                    del os.environ["HF_HUB_OFFLINE"]
+                try:
+                    _vibevoice_processor = VibeVoiceStreamingProcessor.from_pretrained(model_path)
+                finally:
+                    if old_offline:
+                        os.environ["HF_HUB_OFFLINE"] = old_offline
             
             # Decide dtype & attention implementation
             if device == "cuda":
@@ -53,13 +66,41 @@ def get_vibevoice_pipeline():
             else:
                 load_dtype = torch.float32
                 attn_impl = "sdpa"
-                
-            _vibevoice_model = VibeVoiceStreamingForConditionalGenerationInference.from_pretrained(
-                model_path,
-                torch_dtype=load_dtype,
-                device_map=device,
-                attn_implementation=attn_impl
-            )
+            
+            # 2. Load the Model
+            try:
+                _vibevoice_model = VibeVoiceStreamingForConditionalGenerationInference.from_pretrained(
+                    model_path,
+                    torch_dtype=load_dtype,
+                    device_map=device,
+                    attn_implementation=attn_impl,
+                    local_files_only=True
+                )
+            except Exception as e:
+                logger.info(f"VibeVoice model not loaded locally ({e}). Attempting online download...")
+                old_offline = os.environ.get("HF_HUB_OFFLINE")
+                if old_offline:
+                    del os.environ["HF_HUB_OFFLINE"]
+                try:
+                    _vibevoice_model = VibeVoiceStreamingForConditionalGenerationInference.from_pretrained(
+                        model_path,
+                        torch_dtype=load_dtype,
+                        device_map=device,
+                        attn_implementation=attn_impl
+                    )
+                except Exception as online_err:
+                    # If GPU model fails (e.g. Flash Attention errors), retry on CPU as fallback
+                    logger.warning(f"VibeVoice online load failed ({online_err}). Retrying on CPU fallback...")
+                    _vibevoice_model = VibeVoiceStreamingForConditionalGenerationInference.from_pretrained(
+                        model_path,
+                        torch_dtype=torch.float32,
+                        device_map="cpu",
+                        attn_implementation="sdpa"
+                    )
+                finally:
+                    if old_offline:
+                        os.environ["HF_HUB_OFFLINE"] = old_offline
+                        
             _vibevoice_model.eval()
             logger.info("VibeVoice Realtime TTS loaded successfully.")
         except Exception as e:
