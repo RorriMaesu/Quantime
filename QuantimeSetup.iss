@@ -4,7 +4,7 @@
 [Setup]
 AppId={{D37E618A-706E-45E4-A159-4E6DF9B53A04}}
 AppName=Quantime
-AppVersion=1.3.8
+AppVersion=1.3.9
 AppPublisher=RorriMaesu
 DefaultDirName={userpf}\Quantime
 DefaultGroupName=Quantime
@@ -80,7 +80,7 @@ var
 begin
   if CurStep = ssPostInstall then
   begin
-    ProgressFile := ExpandConstant('{userprofile}\.quantime\install_progress.txt');
+    ProgressFile := ExpandConstant('{%USERPROFILE}\.quantime\install_progress.txt');
     
     // Delete the old progress file first if it exists
     DeleteFile(ProgressFile);
