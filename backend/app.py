@@ -23,7 +23,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from backend.database import init_db, get_db_connection, circuit_breaker, FirestoreThrottlingException
 from backend.google_client import GoogleOAuthManager, GoogleCalendarSync, GmailParser
 from backend.ollama_agent import generate_agent_stream, modify_task_time, get_current_schedule
-from backend.voice_processor import pcm_to_wav, synthesize_text_to_pcm, SimpleSilenceDetector, get_tts_pipeline, get_vibevoice_pipeline
+from backend.voice_processor import pcm_to_wav, synthesize_text_to_pcm, SimpleSilenceDetector, get_tts_pipeline
 from backend.voice_stt import LocalSpeechToText
 
 logger = logging.getLogger("quantime.gateway")
@@ -84,13 +84,6 @@ async def startup_event():
         except Exception as e:
             logger.warning(f"Failed to pre-load Kokoro: {e}")
             
-        # Pre-load VibeVoice Realtime TTS
-        try:
-            get_vibevoice_pipeline()
-            logger.info("VibeVoice Realtime TTS pre-loaded successfully.")
-        except Exception as e:
-            logger.warning(f"Failed to pre-load VibeVoice Realtime TTS: {e}")
-
     import threading
     threading.Thread(target=preload_model, daemon=True).start()
     threading.Thread(target=notification_poller_thread, daemon=True).start()
@@ -410,7 +403,7 @@ class ProfileSchema(BaseModel):
     notification_lead_minutes: Optional[str] = '15'
     notification_on_start: Optional[str] = 'true'
     notification_dnd_focus: Optional[str] = 'true'
-    voice_choice: Optional[str] = 'custom_cloned'
+    voice_choice: Optional[str] = 'af_heart'
     llm_model: Optional[str] = 'gemma4-agent-mtp'
 
 @app.get("/api/profile")
@@ -444,6 +437,10 @@ def get_user_profile():
         u_id = id_row["value"] if id_row else os.environ.get("USER_ID", "user")
         u_name = name_row["value"] if name_row else os.environ.get("USER_NAME", "User")
         
+        voice_val = voice_row["value"] if voice_row else 'af_heart'
+        if voice_val == 'custom_cloned' or not voice_val:
+            voice_val = 'af_heart'
+            
         return {
             "user_id": u_id,
             "user_name": u_name,
@@ -452,7 +449,7 @@ def get_user_profile():
             "notification_lead_minutes": nl_row["value"] if nl_row else '15',
             "notification_on_start": ns_row["value"] if ns_row else 'true',
             "notification_dnd_focus": nd_row["value"] if nd_row else 'true',
-            "voice_choice": voice_row["value"] if voice_row else 'custom_cloned',
+            "voice_choice": voice_val,
             "llm_model": model_row["value"] if model_row else 'gemma4-agent-mtp'
         }
     except Exception as e:
@@ -464,7 +461,7 @@ def get_user_profile():
             "notification_lead_minutes": "15",
             "notification_on_start": "true",
             "notification_dnd_focus": "true",
-            "voice_choice": "custom_cloned",
+            "voice_choice": "af_heart",
             "llm_model": "gemma4-agent-mtp",
             "error": str(e)
         }
@@ -530,28 +527,6 @@ def get_ollama_models():
 from fastapi import File, UploadFile
 import shutil
 
-@app.post("/api/voice/clone")
-async def voice_clone_endpoint(file: UploadFile = File(...)):
-    """Accepts a WAV audio file, saves it, and compiles it into a VibeVoice speaker preset."""
-    try:
-        # Create user_voice_ref.wav in user home folder
-        _data_dir = os.path.join(os.path.expanduser("~"), ".quantime")
-        os.makedirs(_data_dir, exist_ok=True)
-        wav_path = os.path.join(_data_dir, "user_voice_ref.wav")
-        with open(wav_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-            
-        logger.info(f"Saved custom reference WAV to {wav_path}")
-        
-        # Compile preset
-        preset_out_path = os.path.join(_data_dir, "user_voice_ref.pt")
-        from voice_processor import generate_voice_preset
-        generate_voice_preset(wav_path, preset_out_path)
-        
-        return {"status": "success", "message": "Voice profile cloned and compiled successfully!"}
-    except Exception as e:
-        logger.error(f"Voice cloning failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Cloning failed: {str(e)}")
 
 class CredentialsSchema(BaseModel):
     client_id: str
@@ -1486,13 +1461,18 @@ def get_vapid_public_key_b64(pub_pem: bytes) -> str:
     return base64.urlsafe_b64encode(pub_bytes).decode('utf-8').rstrip('=')
 
 def get_user_profile_value(key: str, default: str) -> str:
+    if key == 'voice_choice' and default == 'custom_cloned':
+        default = 'af_heart'
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
         cursor.execute("SELECT value FROM user_profiles WHERE key = ?", (key,))
         row = cursor.fetchone()
-        if row:
-            return row["value"]
+        if row and row["value"]:
+            val = row["value"]
+            if key == 'voice_choice' and val == 'custom_cloned':
+                return 'af_heart'
+            return val
     except Exception as e:
         logger.error(f"Error reading user profile {key}: {e}")
     finally:

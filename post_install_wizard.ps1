@@ -229,35 +229,6 @@ Start-Process -FilePath $pythonCmd -ArgumentList "-m venv `"$appDir\backend\.ven
 Write-ProgressUpdate 65 "Installing Python packages..."
 Start-Process -FilePath "$appDir\backend\.venv\Scripts\pip" -ArgumentList "install -r `"$appDir\backend\requirements.txt`"" -Wait -NoNewWindow
 
-# Verify and Download Microsoft VibeVoice if missing
-$vibevoicePath = "$appDir\backend\vibevoice_src"
-if (Test-Path $vibevoicePath) {
-    if (-not (Test-Path "$vibevoicePath\setup.py") -and -not (Test-Path "$vibevoicePath\pyproject.toml")) {
-        Write-ProgressUpdate 70 "Cleaning up corrupted VibeVoice source codebase..."
-        Remove-Item -Recurse -Force $vibevoicePath -ErrorAction SilentlyContinue
-    }
-}
-if (-not (Test-Path $vibevoicePath)) {
-    Write-ProgressUpdate 70 "VibeVoice codebase missing. Downloading archive..."
-    $zipUrl = "https://github.com/microsoft/VibeVoice/archive/refs/heads/main.zip"
-    $zipPath = "$env:TEMP\vibevoice.zip"
-    $extractDir = "$env:TEMP\vibevoice-extract"
-    
-    if (Test-Path $extractDir) {
-        Remove-Item -Recurse -Force $extractDir
-    }
-    
-    Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
-    Write-ProgressUpdate 75 "Extracting VibeVoice packages..."
-    Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
-    $extractedFolder = Get-ChildItem -Path $extractDir -Directory | Select-Object -First 1
-    Move-Item -Path $extractedFolder.FullName -Destination $vibevoicePath -Force
-    Remove-Item $zipPath -Force
-    Remove-Item -Recurse -Force $extractDir
-}
-
-Write-ProgressUpdate 80 "Installing VibeVoice library and dependencies..."
-Start-Process -FilePath "$appDir\backend\.venv\Scripts\pip" -ArgumentList "install `"$vibevoicePath`"" -Wait -NoNewWindow
 
 Write-ProgressUpdate 85 "Installing frontend package packages..."
 Push-Location "$appDir\frontend"
