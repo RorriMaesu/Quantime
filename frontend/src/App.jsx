@@ -460,8 +460,11 @@ export default function App() {
           const match = chat.text.match(/<schedule-proposal tx="([^"]+)">/);
           if (match && match[1]) {
             const txId = match[1];
-            if (!proposalsMap[txId]) {
+            if (proposalsMap[txId] === undefined) {
               try {
+                // Instantly set to null to prevent parallel trigger loops before fetch returns
+                setProposalsMap(prev => ({ ...prev, [txId]: null }));
+                
                 const resp = await fetch(`${API_BASE}/api/proposals/${txId}`);
                 if (resp.ok) {
                   const data = await resp.json();
