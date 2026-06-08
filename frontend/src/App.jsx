@@ -111,6 +111,9 @@ export default function App() {
   const [activeVoiceText, setActiveVoiceText] = useState("");
   const [activeVoiceThoughts, setActiveVoiceThoughts] = useState("");
   const [voiceError, setVoiceError] = useState("");
+  const [ollamaStatus, setOllamaStatus] = useState("loading");
+  const [kokoroStatus, setKokoroStatus] = useState("loading");
+  const [showStatusBadge, setShowStatusBadge] = useState(true);
   const wsRef = useRef(null);
   const audioContextRef = useRef(null);
   const audioQueueRef = useRef([]);
@@ -773,6 +776,38 @@ export default function App() {
     fetchProfile();
     fetchModels();
     fetchInitialChats();
+  }, []);
+
+  // Poll model preheating status on startup
+  useEffect(() => {
+    let active = true;
+    let interval;
+    const pollPreheat = async () => {
+      try {
+        const resp = await fetch(`/api/setup/status`);
+        if (resp.ok && active) {
+          const data = await resp.json();
+          if (data.ollama_status) setOllamaStatus(data.ollama_status);
+          if (data.kokoro_status) setKokoroStatus(data.kokoro_status);
+          
+          if (data.ollama_status === 'ready' && data.kokoro_status === 'ready') {
+            setTimeout(() => {
+              if (active) setShowStatusBadge(false);
+            }, 3000);
+            if (interval) clearInterval(interval);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to poll preheat status:", e);
+      }
+    };
+    
+    pollPreheat();
+    interval = setInterval(pollPreheat, 2500);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
@@ -1745,6 +1780,33 @@ export default function App() {
               <div className="flex items-center space-x-2">
                 <p className="text-xs text-indigo-400 font-medium">Local-First Scheduling Engine</p>
                 <span className="text-[10px] text-gray-500 font-mono bg-gray-900/60 px-1.5 py-0.5 rounded border border-gray-800">v1.2.0</span>
+                {showStatusBadge && (
+                  <div 
+                    className={`flex items-center space-x-1 px-1.5 py-0.5 rounded text-[9px] font-medium border transition-all duration-500 ${
+                      ollamaStatus === 'loading' || kokoroStatus === 'loading'
+                        ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20 animate-pulse'
+                        : ollamaStatus === 'error' || kokoroStatus === 'error'
+                        ? 'bg-red-500/10 text-red-400 border-red-500/20'
+                        : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                    }`}
+                    title={`LLM status: ${ollamaStatus}, Voice status: ${kokoroStatus}`}
+                  >
+                    <span className={`h-1.5 w-1.5 rounded-full ${
+                      ollamaStatus === 'loading' || kokoroStatus === 'loading'
+                        ? 'bg-yellow-400'
+                        : ollamaStatus === 'error' || kokoroStatus === 'error'
+                        ? 'bg-red-400'
+                        : 'bg-emerald-400'
+                    }`} />
+                    <span>
+                      {ollamaStatus === 'loading' || kokoroStatus === 'loading'
+                        ? 'System Warming Up...'
+                        : ollamaStatus === 'error' || kokoroStatus === 'error'
+                        ? 'Preheat Failed'
+                        : 'AI Engine Ready'}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -2486,6 +2548,18 @@ export default function App() {
           <div className="flex items-center space-x-2">
             <MessageSquare className="h-5 w-5 text-indigo-400" />
             <h2 className="font-semibold text-lg text-gray-200">Quantime Orchestrator</h2>
+            {showStatusBadge && (
+              <span 
+                className={`inline-block h-2.5 w-2.5 rounded-full cursor-help transition-all duration-500 ${
+                  ollamaStatus === 'loading' || kokoroStatus === 'loading'
+                    ? 'bg-yellow-400 animate-pulse'
+                    : ollamaStatus === 'error' || kokoroStatus === 'error'
+                    ? 'bg-red-400'
+                    : 'bg-emerald-400'
+                }`}
+                title={`LLM status: ${ollamaStatus}\nVoice status: ${kokoroStatus}`}
+              />
+            )}
           </div>
           <div className="flex items-center space-x-2">
             <button 
@@ -2512,7 +2586,13 @@ export default function App() {
             const proposalMatch = chat.text ? chat.text.match(/<schedule-proposal tx="([^"]+)">/) : null;
             const txId = proposalMatch ? proposalMatch[1] : null;
             const proposalData = txId ? proposalsMap[txId] : null;
-            const cleanText = chat.text ? chat.text.replace(/<schedule-proposal tx="[^"]+">/, "") : "";
+            let cleanText = chat.text ? chat.text.replace(/<schedule-proposal tx="[^"]+">/, "") : "";
+            cleanText = cleanText.replace(/^<tool_(?:call\s+name="[^"]+")?>/, "");
+            cleanText = cleanText.replace(/^<tool_/, "");
+            cleanText = cleanText.replace(/<tool_call\s+name="[^"]+">.*?<\/tool_call>/g, "");
+            cleanText = cleanText.replace(/<tool_call\s+name="[^"]+">/g, "");
+            cleanText = cleanText.replace(/<\/tool_call>/g, "");
+            cleanText = cleanText.trim();
             
             return (
               <div 
@@ -3160,7 +3240,15 @@ export default function App() {
             <div className="flex flex-col space-y-2">
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Live Transcript</span>
               <div className="p-4 rounded-2xl bg-gray-950/60 border border-gray-850 min-h-24 max-h-36 overflow-y-auto text-sm text-gray-100 leading-relaxed scrollbar-thin">
-                {activeVoiceText || <span className="text-gray-650 italic">Wait for response...</span>}
+                {(() => {
+                  if (!activeVoiceText) return <span className="text-gray-650 italic">Wait for response...</span>;
+                  let cleanVoiceText = activeVoiceText;
+                  cleanVoiceText = cleanVoiceText.replace(/^<tool_(?:call\s+name="[^"]+")?>/, "");
+                  cleanVoiceText = cleanVoiceText.replace(/^<tool_/, "");
+                  cleanVoiceText = cleanVoiceText.replace(/<schedule-proposal[^>]*>[\s\S]*?<\/schedule-proposal>/g, "");
+                  cleanVoiceText = cleanVoiceText.trim();
+                  return cleanVoiceText ? renderMessageContent(cleanVoiceText) : <span className="text-gray-650 italic">Wait for response...</span>;
+                })()}
               </div>
             </div>
 

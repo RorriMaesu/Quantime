@@ -38,18 +38,40 @@ def get_selected_model() -> str:
 def get_current_schedule(start_date: str, end_date: str) -> List[Dict[str, Any]]:
     """
     Queries the local SQLite database to fetch schedule tasks between two date-time ranges.
+    Uses timezone-aware Python comparisons to avoid SQLite lexicographical string inequality bugs.
     """
     logger.info(f"Ollama Agent executing: get_current_schedule({start_date}, {end_date})")
+    
+    import datetime
+    try:
+        q_start = datetime.datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+        q_end = datetime.datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+    except Exception as e:
+        logger.error(f"Invalid date boundaries: {e}")
+        return []
+
+    d_start = (q_start.date() - datetime.timedelta(days=1)).isoformat()
+    d_end = (q_end.date() + datetime.timedelta(days=1)).isoformat()
+
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
         cursor.execute("""
-            SELECT id, title, description, start_time, end_time, energy_level, constraint_type, status 
+            SELECT id, title, description, start_time, end_time, energy_level, constraint_type, status, source_event_id
             FROM tasks 
-            WHERE start_time <= ? AND end_time >= ?
-        """, (end_date, start_date))
-        rows = cursor.fetchall()
-        return [dict(row) for row in rows]
+            WHERE substr(start_time, 1, 10) >= ? AND substr(start_time, 1, 10) <= ?
+        """, (d_start, d_end))
+        
+        matched = []
+        for row in cursor.fetchall():
+            try:
+                t_start = datetime.datetime.fromisoformat(row["start_time"].replace('Z', '+00:00'))
+                t_end = datetime.datetime.fromisoformat(row["end_time"].replace('Z', '+00:00'))
+                if max(t_start, q_start) < min(t_end, q_end):
+                    matched.append(dict(row))
+            except Exception:
+                continue
+        return matched
     except Exception as e:
         logger.error(f"Failed to query local schedule: {e}")
         return []
@@ -89,13 +111,49 @@ def resolve_task_id(task_id_or_title: str) -> str:
         conn.close()
     return task_id_or_title
 
-def modify_task_time(task_id: str, new_start: str, new_end: str) -> Dict[str, Any]:
+def check_overlaps(exclude_task_id: Optional[str], start_time: str, end_time: str) -> List[Dict[str, Any]]:
+    """Helper to detect any overlapping tasks in a given range."""
+    import datetime
+    try:
+        q_start = datetime.datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+        q_end = datetime.datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+    except Exception:
+        return []
+    
+    d_start = (q_start.date() - datetime.timedelta(days=1)).isoformat()
+    d_end = (q_end.date() + datetime.timedelta(days=1)).isoformat()
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    conflicts = []
+    try:
+        cursor.execute("""
+            SELECT id, title, start_time, end_time, constraint_type
+            FROM tasks
+            WHERE substr(start_time, 1, 10) >= ? AND substr(start_time, 1, 10) <= ?
+        """, (d_start, d_end))
+        rows = cursor.fetchall()
+        for r in rows:
+            if exclude_task_id and r["id"] == exclude_task_id:
+                continue
+            try:
+                t_start = datetime.datetime.fromisoformat(r["start_time"].replace('Z', '+00:00'))
+                t_end = datetime.datetime.fromisoformat(r["end_time"].replace('Z', '+00:00'))
+                if max(t_start, q_start) < min(t_end, q_end):
+                    conflicts.append(dict(r))
+            except Exception:
+                continue
+    finally:
+        conn.close()
+    return conflicts
+
+def modify_task_time(task_id: str, new_start: str, new_end: str, ignore_conflicts: bool = False) -> Dict[str, Any]:
     """
     Mutates a local task's scheduling bounds.
     Critical Constraint: Aborts immediately if target task is marked as a HARD constraint.
     """
     task_id = resolve_task_id(task_id)
-    logger.info(f"Ollama Agent executing: modify_task_time({task_id}, {new_start}, {new_end})")
+    logger.info(f"Ollama Agent executing: modify_task_time({task_id}, {new_start}, {new_end}, ignore_conflicts={ignore_conflicts})")
     
     import datetime
     try:
@@ -108,6 +166,17 @@ def modify_task_time(task_id: str, new_start: str, new_end: str) -> Dict[str, An
             }
     except Exception as e:
         logger.error(f"Error checking new_start bounds: {e}")
+
+    # Check for overlapping scheduling conflicts
+    if not ignore_conflicts:
+        conflicts = check_overlaps(task_id, new_start, new_end)
+        if conflicts:
+            conflict_names = ", ".join([f"'{c['title']}' ({c['start_time']} - {c['end_time']})" for c in conflicts])
+            return {
+                "status": "error",
+                "message": f"Conflict: The requested slot overlaps with existing tasks: {conflict_names}. "
+                           f"To force this change, set ignore_conflicts=True, or call calculate_schedule_proposals to reschedule."
+            }
 
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -279,11 +348,11 @@ def create_task_dependency(task_id: str, depends_on_task_id: str) -> Dict[str, A
     finally:
         conn.close()
 
-def create_task(title: str, start_time: str, end_time: str, description: str = "", energy_level: str = "none", constraint_type: str = "soft") -> Dict[str, Any]:
+def create_task(title: str, start_time: str, end_time: str, description: str = "", energy_level: str = "none", constraint_type: str = "soft", ignore_conflicts: bool = False) -> Dict[str, Any]:
     """
     Creates a new schedule task locally and mirrors it to Firestore if active.
     """
-    logger.info(f"Ollama Agent executing: create_task({title}, {start_time}, {end_time})")
+    logger.info(f"Ollama Agent executing: create_task({title}, {start_time}, {end_time}, ignore_conflicts={ignore_conflicts})")
     
     import datetime
     try:
@@ -297,7 +366,19 @@ def create_task(title: str, start_time: str, end_time: str, description: str = "
     except Exception as e:
         logger.error(f"Error checking start_time bounds: {e}")
 
-    task_id = f"task_{int(time.time())}"
+    # Check for overlapping scheduling conflicts
+    if not ignore_conflicts:
+        conflicts = check_overlaps(None, start_time, end_time)
+        if conflicts:
+            conflict_names = ", ".join([f"'{c['title']}' ({c['start_time']} - {c['end_time']})" for c in conflicts])
+            return {
+                "status": "error",
+                "message": f"Conflict: The requested slot overlaps with existing tasks: {conflict_names}. "
+                           f"To force this change, set ignore_conflicts=True, or call calculate_schedule_proposals to reschedule."
+            }
+
+    import random
+    task_id = f"task_{int(time.time())}_{random.randint(1000, 9999)}"
     
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -565,6 +646,206 @@ def get_day_of_week(date_query: str) -> Dict[str, Any]:
             "message": f"Could not parse date: {date_query}. Provide a standard date."
         }
 
+def calculate_schedule_proposals(title: str, duration_minutes: int, preferred_start: str, energy_level: str = "none", constraint_type: str = "soft") -> Dict[str, Any]:
+    """
+    Intelligently analyzes schedule conflicts for a target start slot and returns 
+    three proposal strategies (compaction, postponement, prioritization) automatically
+    staged in proposed_schedules.
+    """
+    import datetime
+    logger.info(f"Ollama Agent executing: calculate_schedule_proposals({title}, {duration_minutes}, {preferred_start})")
+    
+    try:
+        new_start_dt = datetime.datetime.fromisoformat(preferred_start.replace('Z', '+00:00'))
+    except Exception as e:
+        return {"status": "error", "message": f"Invalid preferred_start format: {e}"}
+        
+    now = datetime.datetime.now().astimezone()
+    if new_start_dt < now:
+        return {"status": "error", "message": f"Conflict: Cannot schedule in the past. Preferred start '{preferred_start}' is before current time '{now.isoformat()}'."}
+        
+    duration = datetime.timedelta(minutes=duration_minutes)
+    new_end_dt = new_start_dt + duration
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT id, title, start_time, end_time, energy_level, constraint_type, status FROM tasks")
+        all_tasks = [dict(r) for r in cursor.fetchall()]
+    except Exception as e:
+        return {"status": "error", "message": f"Database query failed: {e}"}
+    finally:
+        conn.close()
+        
+    target_day = new_start_dt.date()
+    day_tasks = []
+    for t in all_tasks:
+        try:
+            t_start = datetime.datetime.fromisoformat(t["start_time"].replace('Z', '+00:00'))
+            t_end = datetime.datetime.fromisoformat(t["end_time"].replace('Z', '+00:00'))
+            if t_start.date() == target_day or t_end.date() == target_day:
+                t["start_dt"] = t_start
+                t["end_dt"] = t_end
+                day_tasks.append(t)
+        except Exception:
+            continue
+            
+    conflicting_tasks = []
+    for t in day_tasks:
+        if max(t["start_dt"], new_start_dt) < min(t["end_dt"], new_end_dt):
+            conflicting_tasks.append(t)
+            
+    transaction_id = f"tx_{int(time.time())}"
+    tz_suffix = preferred_start[-6:] if (preferred_start[-6] in ('+', '-')) else "+00:00"
+    
+    def format_dt(dt: datetime.datetime) -> str:
+        return dt.strftime("%Y-%m-%dT%H:%M:%S") + tz_suffix
+
+    has_hard_conflict = any(t["constraint_type"] == "hard" for t in conflicting_tasks)
+    
+    # 1. POSTPONEMENT
+    postpone_start = new_start_dt
+    while True:
+        postpone_end = postpone_start + duration
+        overlap = False
+        for t in day_tasks:
+            if max(t["start_dt"], postpone_start) < min(t["end_dt"], postpone_end):
+                overlap = True
+                postpone_start = t["end_dt"]
+                minutes = (postpone_start.minute // 5 + (1 if postpone_start.minute % 5 else 0)) * 5
+                postpone_start = postpone_start.replace(minute=0, second=0, microsecond=0) + datetime.timedelta(minutes=minutes)
+                break
+        if not overlap:
+            break
+            
+    postpone_changes = [{
+        "task_id": "new_task",
+        "new_start": format_dt(postpone_start),
+        "new_end": format_dt(postpone_end)
+    }]
+    
+    # 2. COMPACTION
+    soft_tasks_to_pack = [
+        {
+            "id": t["id"],
+            "title": t["title"],
+            "duration": t["end_dt"] - t["start_dt"]
+        }
+        for t in day_tasks if t["constraint_type"] != "hard"
+    ]
+    soft_tasks_to_pack.append({
+        "id": "new_task",
+        "title": title,
+        "duration": duration
+    })
+    
+    pack_start = datetime.datetime.combine(target_day, datetime.time(9, 0)).astimezone(new_start_dt.tzinfo)
+    if target_day == now.date():
+        pack_start = max(pack_start, now)
+        minutes = (pack_start.minute // 5 + (1 if pack_start.minute % 5 else 0)) * 5
+        pack_start = pack_start.replace(minute=0, second=0, microsecond=0) + datetime.timedelta(minutes=minutes)
+        
+    hard_tasks = sorted([t for t in day_tasks if t["constraint_type"] == "hard"], key=lambda x: x["start_dt"])
+    
+    compaction_changes = []
+    for st in soft_tasks_to_pack:
+        while True:
+            st_end = pack_start + st["duration"]
+            overlap_hard = False
+            for ht in hard_tasks:
+                if max(ht["start_dt"], pack_start) < min(ht["end_dt"], st_end):
+                    overlap_hard = True
+                    pack_start = ht["end_dt"]
+                    minutes = (pack_start.minute // 5 + (1 if pack_start.minute % 5 else 0)) * 5
+                    pack_start = pack_start.replace(minute=0, second=0, microsecond=0) + datetime.timedelta(minutes=minutes)
+                    break
+            if not overlap_hard:
+                compaction_changes.append({
+                    "task_id": st["id"],
+                    "new_start": format_dt(pack_start),
+                    "new_end": format_dt(st_end)
+                })
+                pack_start = st_end
+                break
+                
+    # 3. PRIORITIZATION
+    prioritization_changes = []
+    if has_hard_conflict:
+        hard_ends = [ht["end_dt"] for ht in conflicting_tasks if ht["constraint_type"] == "hard"]
+        prio_start = max(hard_ends)
+        minutes = (prio_start.minute // 5 + (1 if prio_start.minute % 5 else 0)) * 5
+        prio_start = prio_start.replace(minute=0, second=0, microsecond=0) + datetime.timedelta(minutes=minutes)
+    else:
+        prio_start = new_start_dt
+        
+    prio_end = prio_start + duration
+    prioritization_changes.append({
+        "task_id": "new_task",
+        "new_start": format_dt(prio_start),
+        "new_end": format_dt(prio_end)
+    })
+    
+    occupied_slots = sorted(
+        [{"start": t["start_dt"], "end": t["end_dt"]} for t in day_tasks if t["constraint_type"] == "hard"] + 
+        [{"start": prio_start, "end": prio_end}],
+        key=lambda x: x["start"]
+    )
+    
+    for ct in conflicting_tasks:
+        if ct["constraint_type"] == "hard":
+            continue
+        ct_duration = ct["end_dt"] - ct["start_dt"]
+        ct_start = prio_end
+        while True:
+            ct_end = ct_start + ct_duration
+            overlap = False
+            for slot in occupied_slots:
+                if max(slot["start"], ct_start) < min(slot["end"], ct_end):
+                    overlap = True
+                    ct_start = slot["end"]
+                    minutes = (ct_start.minute // 5 + (1 if ct_start.minute % 5 else 0)) * 5
+                    ct_start = ct_start.replace(minute=0, second=0, microsecond=0) + datetime.timedelta(minutes=minutes)
+                    break
+            if not overlap:
+                prioritization_changes.append({
+                    "task_id": ct["id"],
+                    "new_start": format_dt(ct_start),
+                    "new_end": format_dt(ct_end)
+                })
+                occupied_slots.append({"start": ct_start, "end": ct_end})
+                occupied_slots = sorted(occupied_slots, key=lambda x: x["start"])
+                break
+                
+    # Deduplicate proposals
+    unique_proposals = {}
+    seen_changes = set()
+    
+    strategies = [
+        ("prioritization", "Force the new task into the preferred time slot and push overlapping flexible tasks to later open windows.", prioritization_changes),
+        ("compaction", "Consolidate all flexible/soft tasks into consecutive blocks starting from morning or current time, avoiding scheduled hard commitments.", compaction_changes),
+        ("postponement", f"Schedule the new task later from {postpone_start.strftime('%I:%M %p')} to {postpone_end.strftime('%I:%M %p')}, keeping existing tasks in place.", postpone_changes)
+    ]
+    
+    for opt_id, desc, changes in strategies:
+        normalized = sorted(changes, key=lambda x: (x["task_id"], x["new_start"]))
+        changes_str = json.dumps(normalized)
+        if changes_str not in seen_changes:
+            seen_changes.add(changes_str)
+            unique_proposals[opt_id] = changes
+            stage_schedule_proposal(
+                transaction_id=transaction_id,
+                option_id=opt_id,
+                description=desc,
+                proposed_changes=changes
+            )
+            
+    return {
+        "status": "success",
+        "transaction_id": transaction_id,
+        "conflicts_detected": len(conflicting_tasks) > 0,
+        "proposals": unique_proposals
+    }
+
 # Maps tool identifiers to corresponding local modules
 TOOL_FUNCTIONS = {
     "get_current_schedule": get_current_schedule,
@@ -579,8 +860,10 @@ TOOL_FUNCTIONS = {
     "sync_google_calendar": sync_google_calendar,
     "stage_schedule_proposal": stage_schedule_proposal,
     "get_circadian_profile": get_circadian_profile,
-    "get_day_of_week": get_day_of_week
+    "get_day_of_week": get_day_of_week,
+    "calculate_schedule_proposals": calculate_schedule_proposals
 }
+
 
 TOOL_SCHEMAS = [
     {
@@ -640,7 +923,8 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "task_id": {"type": "string", "description": "Unique ID identifier of task"},
                     "new_start": {"type": "string", "description": "New ISO start date-time"},
-                    "new_end": {"type": "string", "description": "New ISO end date-time"}
+                    "new_end": {"type": "string", "description": "New ISO end date-time"},
+                    "ignore_conflicts": {"type": "boolean", "description": "Set to true to force overlapping schedule times (defaults to false)"}
                 },
                 "required": ["task_id", "new_start", "new_end"]
             }
@@ -688,7 +972,8 @@ TOOL_SCHEMAS = [
                     "end_time": {"type": "string", "description": "ISO end date-time, e.g. '2026-06-08T17:00:00Z'"},
                     "description": {"type": "string", "description": "Detailed description/notes for the task"},
                     "energy_level": {"type": "string", "enum": ["none", "crimson", "teal"], "description": "Energy band requirement"},
-                    "constraint_type": {"type": "string", "enum": ["soft", "hard"], "description": "Priority type of constraint (soft: flexible, hard: immutable)"}
+                    "constraint_type": {"type": "string", "enum": ["soft", "hard"], "description": "Priority type of constraint (soft: flexible, hard: immutable)"},
+                    "ignore_conflicts": {"type": "boolean", "description": "Set to true to force overlapping schedule times (defaults to false)"}
                 },
                 "required": ["title", "start_time", "end_time"]
             }
@@ -786,6 +1071,24 @@ TOOL_SCHEMAS = [
                 "properties": {}
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "calculate_schedule_proposals",
+            "description": "Intelligently analyzes schedule conflicts for a target start slot and returns three proposal strategies (compaction, postponement, prioritization) automatically staged in proposed_schedules database.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Title of the new task to schedule"},
+                    "duration_minutes": {"type": "integer", "description": "Duration of the task in minutes"},
+                    "preferred_start": {"type": "string", "description": "Preferred ISO start date-time using correct timezone offset suffix, e.g. '2026-06-08T15:00:00-07:00'"},
+                    "energy_level": {"type": "string", "enum": ["none", "crimson", "teal"], "description": "Energy band requirement (optional)"},
+                    "constraint_type": {"type": "string", "enum": ["soft", "hard"], "description": "Priority type of constraint (optional, defaults to soft)"}
+                },
+                "required": ["title", "duration_minutes", "preferred_start"]
+            }
+        }
     }
 ]
 
@@ -805,8 +1108,9 @@ Behavioral Guidelines & Rules:
 5. **Sync Proactively**: If you need the latest email context or calendar constraints, call `sync_google_calendar` or `fetch_unread_emails`.
 6. **Task Dependencies**: Enforce Directed Acyclic Graph (DAG) dependency constraints before proposing changes. Call `create_task_dependency` to link dependent tasks.
 7. **Speculative Conflict Rescheduling**:
-   - When the user asks to schedule a new task that conflicts with existing tasks, or requests a workaround for a conflict, DO NOT call `modify_task_time` directly.
-   - Instead, generate a unique transaction ID (`tx_<timestamp>`) and stage up to three rescheduling workaround options using `stage_schedule_proposal` (e.g. option_id="compaction", "postponement", or "prioritization").
+   - When the user asks to schedule a new task that conflicts with existing tasks, or requests a workaround for a conflict, you MUST call the `calculate_schedule_proposals` tool with the target task's details.
+   - This tool will automatically compute, format, and database-stage three conflict-free rescheduling strategies: compaction, postponement, and prioritization.
+   - When explaining the staged options to the user, you MUST number them sequentially starting from Option 1 (e.g. Option 1, Option 2) regardless of which strategies were staged. Do not skip numbers or hardcode Option 3 if only two options are available.
    - Clearly explain each option's strategy in the text response and output a `<schedule-proposal tx="tx_id_here">` tag at the end of your message to render the interactive buttons in the UI.
 8. **Conversational & Proactive**: Give clear summaries of actions you took, highlight what tools you executed, explain why you restructured the schedule, and outline any proposed adjustments clearly to the user.
 9. **No Scheduling in the Past**: You must NEVER create new tasks or modify existing tasks to start in the past relative to the current date-time context. Always verify the current time before choosing task time slots.
@@ -890,7 +1194,7 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], 
                 method="POST"
             )
             
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=120) as resp:
                 in_thought_block = False
                 assistant_message = None
                 yielded_text_len = 0
@@ -949,12 +1253,27 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], 
                                 full_content = assistant_message["content"]
                                 tool_call_start = full_content.find("<tool_call")
                                 if tool_call_start == -1:
-                                    yield ("text", content)
-                                    yielded_text_len = len(full_content)
+                                    # Check if the end of full_content is a partial prefix of '<tool_call' or '<|channel>'
+                                    check_len = min(12, len(full_content))
+                                    has_partial_prefix = False
+                                    for i in range(1, check_len + 1):
+                                        suffix = full_content[-i:]
+                                        if "<tool_call".startswith(suffix) or "</tool_call>".startswith(suffix) or "<|channel>".startswith(suffix):
+                                            safe_to_yield_len = len(full_content) - i - yielded_text_len
+                                            if safe_to_yield_len > 0:
+                                                yield ("text", full_content[yielded_text_len : yielded_text_len + safe_to_yield_len])
+                                                yielded_text_len += safe_to_yield_len
+                                            has_partial_prefix = True
+                                            break
+                                    if not has_partial_prefix:
+                                        safe_to_yield_len = len(full_content) - yielded_text_len
+                                        if safe_to_yield_len > 0:
+                                            yield ("text", full_content[yielded_text_len:])
+                                            yielded_text_len = len(full_content)
                                 else:
                                     safe_to_yield_len = tool_call_start - yielded_text_len
                                     if safe_to_yield_len > 0:
-                                        yield ("text", content[:safe_to_yield_len])
+                                        yield ("text", full_content[yielded_text_len:tool_call_start])
                                     yielded_text_len = tool_call_start
                             else:
                                 yield ("text", content)
@@ -1024,4 +1343,49 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], 
             else:
                 yield ("text", f"\n[System Error: Connection to Ollama failed during recursive tool loop: {e}]")
 
-    yield from chat_loop(messages, 0)
+    tag_buffer = ""
+    in_suppress_block = False
+    
+    for channel, chunk in chat_loop(messages, 0):
+        if channel == "text":
+            tag_buffer += chunk
+            while tag_buffer:
+                if in_suppress_block:
+                    idx = tag_buffer.find("</tool_call>")
+                    if idx != -1:
+                        tag_buffer = tag_buffer[idx + len("</tool_call>"):]
+                        in_suppress_block = False
+                    else:
+                        break
+                else:
+                    if tag_buffer.startswith("<"):
+                        is_prefix = False
+                        target_tags = ["<tool_call", "</tool_call>", "<|channel>"]
+                        for tag in target_tags:
+                            if tag.startswith(tag_buffer):
+                                is_prefix = True
+                                break
+                            elif tag_buffer.startswith(tag):
+                                if tag == "<tool_call":
+                                    in_suppress_block = True
+                                tag_buffer = tag_buffer[len(tag):]
+                                is_prefix = True
+                                break
+                        if is_prefix:
+                            break
+                        else:
+                            yield ("text", tag_buffer[0])
+                            tag_buffer = tag_buffer[1:]
+                    else:
+                        idx = tag_buffer.find("<")
+                        if idx != -1:
+                            yield ("text", tag_buffer[:idx])
+                            tag_buffer = tag_buffer[idx:]
+                        else:
+                            yield ("text", tag_buffer)
+                            tag_buffer = ""
+        else:
+            yield (channel, chunk)
+            
+    if tag_buffer and not in_suppress_block:
+        yield ("text", tag_buffer)

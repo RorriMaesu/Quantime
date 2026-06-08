@@ -26,8 +26,54 @@ from backend.ollama_agent import generate_agent_stream, modify_task_time, get_cu
 from backend.voice_processor import pcm_to_wav, synthesize_text_to_pcm, SimpleSilenceDetector, get_tts_pipeline
 from backend.voice_stt import LocalSpeechToText
 
+# Configure logging at the absolute beginning of the file
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
 logger = logging.getLogger("quantime.gateway")
-logging.basicConfig(level=logging.INFO)
+
+# Print environment and drive diagnostic info
+try:
+    import platform
+    logger.info(f"--- STARTUP ENVIRONMENT DIAGNOSTICS ---")
+    logger.info(f"Python executable: {sys.executable}")
+    logger.info(f"Current OS: {platform.system()} {platform.release()}")
+    logger.info(f"Current User: {os.environ.get('USERNAME') or 'Unknown'}")
+    logger.info(f"HF_HOME in env: {os.environ.get('HF_HOME')}")
+    logger.info(f"HF_HUB_OFFLINE in env: {os.environ.get('HF_HUB_OFFLINE')}")
+    
+    # Check drive M accessibility
+    m_exists = os.path.exists("M:\\")
+    logger.info(f"Drive M: exists={m_exists}")
+    if m_exists:
+        try:
+            m_path = "M:\\"
+            logger.info(f"Drive M: contents={os.listdir(m_path)}")
+            hf_cache_path = "M:\\AiStudio\\HF_Cache"
+            logger.info(f"HF cache path '{hf_cache_path}' exists={os.path.exists(hf_cache_path)}")
+            if os.path.exists(hf_cache_path):
+                logger.info(f"HF cache hub contents={os.listdir(os.path.join(hf_cache_path, 'hub')) if os.path.exists(os.path.join(hf_cache_path, 'hub')) else 'no hub folder'}")
+        except Exception as drive_err:
+            logger.error(f"Failed to access Drive M contents: {drive_err}")
+    
+    # Check registry keys under HKEY_USERS
+    if platform.system() == "Windows":
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_USERS, "") as hk_users:
+                sids = []
+                idx = 0
+                while True:
+                    sids.append(winreg.EnumKey(hk_users, idx))
+                    idx += 1
+        except OSError:
+            pass
+        logger.info(f"HKEY_USERS SIDs: {sids}")
+    logger.info(f"----------------------------------------")
+except Exception as diag_err:
+    logger.error(f"Failed to print startup diagnostics: {diag_err}")
 
 # Initialize FastAPI Application
 app = FastAPI(title="Quantime Gateway API", version="1.2.0")
@@ -43,6 +89,12 @@ app.add_middleware(
 
 # Initialize local SQLite database schemas
 init_db()
+
+# Track background model initialization statuses
+model_loading_status = {
+    "ollama": "loading",
+    "kokoro": "loading"
+}
 
 @app.on_event("startup")
 async def startup_event():
@@ -71,18 +123,22 @@ async def startup_event():
                 headers={"Content-Type": "application/json"},
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=180) as resp:
                 resp.read()
             logger.info(f"Ollama model '{selected_model}' pre-loaded successfully in VRAM.")
+            model_loading_status["ollama"] = "ready"
         except Exception as e:
             logger.warning(f"Failed to pre-load Ollama model '{selected_model}': {e}")
+            model_loading_status["ollama"] = "error"
 
         # Pre-load Kokoro
         try:
             get_tts_pipeline()
             logger.info("Kokoro pre-loaded successfully.")
+            model_loading_status["kokoro"] = "ready"
         except Exception as e:
             logger.warning(f"Failed to pre-load Kokoro: {e}")
+            model_loading_status["kokoro"] = "error"
             
     import threading
     threading.Thread(target=preload_model, daemon=True).start()
@@ -154,6 +210,17 @@ def update_firestore_document(doc_ref, data: Dict[str, Any], force: bool = False
         logger.error(f"Firestore update failed: {e}")
 
 def update_chat_record(chat_id: str, sender: str = 'agent', text: str = "", thoughts: str = "", status: str = "processing"):
+    if sender == 'agent' and text:
+        import re
+        # Clean up unclosed leaked tool tags
+        text = re.sub(r'^<tool_(?:call\s+name="[^"]+")?>', '', text)
+        text = re.sub(r'^<tool_', '', text)
+        # Strip any tool calls
+        text = re.sub(r'<tool_call\s+name="[^"]+">.*?</tool_call>', '', text, flags=re.DOTALL)
+        text = re.sub(r'<tool_call\s+name="[^"]+">', '', text)
+        text = text.replace('</tool_call>', '')
+        text = text.strip()
+
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -781,7 +848,9 @@ def get_setup_status():
     return {
         "has_credentials": has_credentials,
         "has_model": has_model,
-        "tunnel_url": get_localtunnel_url()
+        "tunnel_url": get_localtunnel_url(),
+        "ollama_status": model_loading_status["ollama"],
+        "kokoro_status": model_loading_status["kokoro"]
     }
 
 
@@ -1350,7 +1419,7 @@ async def voice_chat_websocket(websocket: WebSocket):
                     ignored_endings = ("a.m.", "p.m.", "e.g.", "i.e.", "vs.", "mr.", "mrs.", "dr.", "ms.")
                     slice_start = last_split_index
                     current_slice = text_buffer[slice_start:]
-                    boundaries = list(re.finditer(r'(.+?[.!?])(?:\s+|\n+|$)', current_slice))
+                    boundaries = list(re.finditer(r'(.+?(?:[.!?]|\n))', current_slice))
                     for m in boundaries:
                         candidate = m.group(1).strip()
                         is_abbreviation = False
@@ -1359,7 +1428,7 @@ async def voice_chat_websocket(websocket: WebSocket):
                         elif re.search(r'\b[a-zA-Z]\.$', candidate):
                             is_abbreviation = True
                             
-                        if not is_abbreviation and len(candidate) > 5:
+                        if not is_abbreviation and len(candidate) > 2:
                             last_split_index = slice_start + m.end()
                             
                             voice_choice = get_user_profile_value('voice_choice', 'custom_cloned')

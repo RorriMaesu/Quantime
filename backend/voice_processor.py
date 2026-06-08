@@ -3,10 +3,15 @@ import os
 import platform
 import logging
 
+# Configure early logging so startup diagnostics in this module are visible in uvicorn
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
 logger = logging.getLogger("quantime.voice_processor")
 
-# On Windows, when run under background environments (like Task Scheduler/VBScript),
-# user environment variables (such as custom HF_HOME or OLLAMA_MODELS) may be missing.
+# On Windows, when run under background environments (like Task Scheduler/VBScript/Installer),
+# user environment variables (such as custom HF_HOME or OLLAMA_MODELS) may be missing or default to the Admin profile.
 # We restore them directly from the registry to ensure offline caches are resolved correctly.
 if platform.system() == "Windows":
     try:
@@ -22,8 +27,9 @@ if platform.system() == "Windows":
                     while True:
                         name, value, val_type = winreg.EnumValue(key, i)
                         if name in ("HF_HOME", "HF_HUB_CACHE", "OLLAMA_MODELS"):
-                            if name not in os.environ:
-                                expanded_value = os.path.expandvars(str(value))
+                            expanded_value = os.path.expandvars(str(value))
+                            # Always override if the registry has a configured path
+                            if os.environ.get(name) != expanded_value:
                                 os.environ[name] = expanded_value
                                 logger.info(f"Restored registry env: {name}={expanded_value}")
                         i += 1
@@ -43,8 +49,9 @@ if platform.system() == "Windows":
                                 while True:
                                     name, value, val_type = winreg.EnumValue(env_key, e_idx)
                                     if name in ("HF_HOME", "HF_HUB_CACHE", "OLLAMA_MODELS"):
-                                        if name not in os.environ:
-                                            expanded_value = os.path.expandvars(str(value))
+                                        expanded_value = os.path.expandvars(str(value))
+                                        # Always override if registry has configured path
+                                        if os.environ.get(name) != expanded_value:
                                             os.environ[name] = expanded_value
                                             logger.info(f"Restored SID {sid_name} env: {name}={expanded_value}")
                                     e_idx += 1
@@ -107,9 +114,16 @@ def normalize_text_for_tts(text: str) -> str:
     import re
     from num2words import num2words
     
-    # 1. Remove markdown syntax like *, _, `, #, -, [ ]
+    # 0a. Strip schedule proposals and their inner JSON content entirely
+    text = re.sub(r'<schedule-proposal[^>]*>.*?</schedule-proposal>', ' ', text, flags=re.DOTALL)
+    
+    # 0. Strip any XML/HTML tags (like <tool_call>...</tool_call> or <|channel>) to prevent tag leaks
+    text = re.sub(r'<[^>]+>', ' ', text)
+    
+    # 1. Remove markdown syntax, brackets, parentheses, curly braces, and pipes
     text = re.sub(r'[*_`#\-]', ' ', text)
     text = re.sub(r'\[\s*x?\s*\]', ' ', text)
+    text = re.sub(r'[\[\](){}|]', ' ', text)
     
     # 2. Filter out specific database identifiers like task_1780851954
     text = re.sub(r'task\s+\d+|task\d+|task\s*_\s*\d+', ' ', text)
@@ -140,13 +154,19 @@ def normalize_text_for_tts(text: str) -> str:
         text = re.sub(tz_pattern, tz_expanded, text, flags=re.IGNORECASE)
         
     # 5b. Format times to be read conversationally (e.g. 10:00 AM -> 10 AM, 10:30 PM -> 10 thirty PM, 2:05 -> 2 oh 5)
+    def to_12_hour(hour, meridiem):
+        if meridiem:
+            return hour, meridiem.upper()
+        if hour >= 12:
+            return (hour - 12 if hour > 12 else 12), "PM"
+        else:
+            return (12 if hour == 0 else hour), "AM"
+
     def replace_hour_only_time(match):
         hour = int(match.group(1))
         meridiem = match.group(2)
-        if meridiem:
-            return f"{hour} {meridiem}"
-        else:
-            return f"{hour} o'clock"
+        h, m = to_12_hour(hour, meridiem)
+        return f"{h} {m}"
             
     text = re.sub(r'\b(\d{1,2}):00\s*(AM|PM|am|pm)?\b', replace_hour_only_time, text)
     
@@ -154,14 +174,14 @@ def normalize_text_for_tts(text: str) -> str:
         hour = int(match.group(1))
         minutes = int(match.group(2))
         meridiem = match.group(3)
+        h, m = to_12_hour(hour, meridiem)
         if minutes == 0:
             min_str = ""
         elif minutes < 10:
-            min_str = f"oh {minutes}"
+            min_str = f" oh {minutes}"
         else:
-            min_str = str(minutes)
-        meridiem_str = f" {meridiem}" if meridiem else ""
-        return f"{hour} {min_str}{meridiem_str}"
+            min_str = f" {minutes}"
+        return f"{h}{min_str} {m}"
         
     text = re.sub(r'\b(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?\b', replace_standard_time, text)
 
@@ -202,15 +222,30 @@ def synthesize_text_to_pcm(text: str, voice: str = 'af_heart') -> bytes:
 
     try:
         import torch
-        generator = pipeline(text, voice=voice, speed=1.0, split_pattern=r'\n+')
-        audio_chunks = []
-        for _, _, audio in generator:
-            if audio is not None:
-                if isinstance(audio, torch.Tensor):
-                    audio = audio.cpu().numpy()
-                audio_int16 = (audio * 32767).astype(np.int16)
-                audio_chunks.append(audio_int16.tobytes())
-        return b"".join(audio_chunks)
+        try:
+            generator = pipeline(text, voice=voice, speed=1.0, split_pattern=r'\n+')
+            audio_chunks = []
+            for _, _, audio in generator:
+                if audio is not None:
+                    if isinstance(audio, torch.Tensor):
+                        audio = audio.cpu().numpy()
+                    audio_int16 = (audio * 32767).astype(np.int16)
+                    audio_chunks.append(audio_int16.tobytes())
+            return b"".join(audio_chunks)
+        except Exception as inner_e:
+            if voice != 'af_heart':
+                logger.warning(f"Voice '{voice}' failed to synthesize offline ({inner_e}). Falling back to cached 'af_heart'.")
+                generator = pipeline(text, voice='af_heart', speed=1.0, split_pattern=r'\n+')
+                audio_chunks = []
+                for _, _, audio in generator:
+                    if audio is not None:
+                        if isinstance(audio, torch.Tensor):
+                            audio = audio.cpu().numpy()
+                        audio_int16 = (audio * 32767).astype(np.int16)
+                        audio_chunks.append(audio_int16.tobytes())
+                return b"".join(audio_chunks)
+            else:
+                raise
     except Exception as e:
         logger.error(f"TTS synthesis error: {e}")
         return b""
