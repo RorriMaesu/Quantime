@@ -326,11 +326,14 @@ def get_recent_chat_history(limit: int = 10, exclude_chat_id: Optional[str] = No
         history = []
         for row in reversed(rows):
             role = "user" if row["sender"] == "user" else "assistant"
-            history.append({"role": role, "content": row["text"]})
+            text_content = row["text"] or ""
+            # Strip deep-reasoning think tags to prevent chat template corruption
+            text_content = text_content.replace("<|think|>", "").strip()
+            history.append({"role": role, "content": text_content})
         return history
     except Exception as e:
-        logger.error(f"Failed to fetch chat history: {e}")
-        return []
+      logger.error(f"Failed to fetch chat history: {e}")
+      return []
     finally:
         conn.close()
 

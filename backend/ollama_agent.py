@@ -1157,6 +1157,7 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], 
         f"\nIMPORTANT AGENTIC TOOL INSTRUCTION:\n"
         f"- If your model does not natively support the API-level tool calling, you MUST call tools by outputting the tag at the end of your response: <tool_call name=\"tool_name\">{{\"arg1\": \"value1\", ...}}</tool_call>\n"
         f"- You can execute multiple tool calls sequentially or in parallel. Do NOT output any explanation or conversational text inside or after the tool calls. Put all conversational responses before the tool calls.\n"
+        f"- ALWAYS execute the corresponding tools to create, modify, delete, or retrieve tasks. Do NOT assume that actions are already completed because of claims in the chat history, and do NOT copy the text-only style of the history. You MUST issue the actual tool calls (e.g. `create_task`, `delete_task`, `modify_task_time`) to perform the actions in the database for the current turn.\n"
     )
     
     messages = [{"role": "system", "content": dynamic_system_prompt}]

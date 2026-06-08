@@ -125,6 +125,10 @@ def normalize_text_for_tts(text: str) -> str:
     # 0. Strip any XML/HTML tags (like <tool_call>...</tool_call> or <|channel>) to prevent tag leaks
     text = re.sub(r'<[^>]+>', ' ', text)
     
+    # 0b. Convert time/digit ranges with hyphens to "to" (e.g., 7-9 -> 7 to 9, 10:00-11:30 -> 10:00 to 11:30)
+    # Uses lookaround assertions to prevent matching YYYY-MM-DD date formats
+    text = re.sub(r'(?<!\d{4}-)\b(\d{1,2}(?::\d{2})?)\s*-\s*(\d{1,2}(?::\d{2})?)\b(?!\s*-\s*\d{2})', r'\1 to \2', text)
+    
     # 1. Remove markdown syntax, brackets, parentheses, curly braces, and pipes
     text = re.sub(r'[*_`#\-]', ' ', text)
     text = re.sub(r'\[\s*x?\s*\]', ' ', text)
@@ -173,7 +177,7 @@ def normalize_text_for_tts(text: str) -> str:
         h, m = to_12_hour(hour, meridiem)
         return f"{h} {m}"
             
-    text = re.sub(r'\b(\d{1,2}):00\s*(AM|PM|am|pm)?\b', replace_hour_only_time, text)
+    text = re.sub(r'\b(\d{1,2}):00(?:\s*(AM|PM|am|pm))?\b', replace_hour_only_time, text)
     
     def replace_standard_time(match):
         hour = int(match.group(1))
@@ -188,7 +192,7 @@ def normalize_text_for_tts(text: str) -> str:
             min_str = f" {minutes}"
         return f"{h}{min_str} {m}"
         
-    text = re.sub(r'\b(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?\b', replace_standard_time, text)
+    text = re.sub(r'\b(\d{1,2}):(\d{2})(?:\s*(AM|PM|am|pm))?\b', replace_standard_time, text)
 
     # 6. Expand other digits/numbers to words
     def replace_number(match):
