@@ -304,6 +304,135 @@ class TestQuantimeBackend(unittest.TestCase):
             
         finally:
             backend.app.get_db_connection = original_get_db
+
+    def test_recurring_tasks_local_generation(self):
+        """Verify recurring tasks are generated correctly for local offline fallback."""
+        from backend.app import create_task, TaskSchema
+        import backend.app
+        
+        original_get_db = backend.app.get_db_connection
+        backend.app.get_db_connection = lambda: get_db_connection(self.db_path)
+        
+        try:
+            task = TaskSchema(
+                id="task_test_rec_123",
+                title="Weekly Synced Meeting",
+                description="Sync meeting description",
+                start_time="2026-06-08T10:00:00Z",
+                end_time="2026-06-08T11:00:00Z",
+                energy_level="none",
+                constraint_type="soft",
+                status="pending",
+                recurrence_pattern="weekly",
+                recurrence_count=3
+            )
+            
+            res = create_task(task)
+            self.assertEqual(res["status"], "success")
+            self.assertEqual(res["tasks_created"], 3)
+            
+            # Query db directly to verify 3 tasks were created
+            conn = get_db_connection(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, start_time, end_time, recurrence_group_id FROM tasks ORDER BY start_time ASC")
+            rows = [dict(r) for r in cursor.fetchall()]
+            conn.close()
+            
+            self.assertEqual(len(rows), 3)
+            # Verify weekly interval
+            self.assertEqual(rows[0]["start_time"], "2026-06-08T10:00:00Z")
+            self.assertEqual(rows[1]["start_time"], "2026-06-15T10:00:00Z")
+            self.assertEqual(rows[2]["start_time"], "2026-06-22T10:00:00Z")
+            
+            # Verify they all share the same recurrence group ID
+            group_id = rows[0]["recurrence_group_id"]
+            self.assertTrue(group_id.startswith("rec_"))
+            self.assertEqual(rows[1]["recurrence_group_id"], group_id)
+            self.assertEqual(rows[2]["recurrence_group_id"], group_id)
+            
+            # Test deleting series
+            from backend.app import delete_task_endpoint
+            del_res = delete_task_endpoint(rows[0]["id"], target="series")
+            self.assertEqual(del_res["status"], "success")
+            
+            # Verify database is empty
+            conn = get_db_connection(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM tasks")
+            count = cursor.fetchone()[0]
+            conn.close()
+            self.assertEqual(count, 0)
+            print("[OK] Local recurring task generation and series deletion verified successfully.")
+            
+        finally:
+            backend.app.get_db_connection = original_get_db
+
+    def test_api_security_middleware(self):
+        """Verify API security middleware restricts remote hosts and bypasses local host requests."""
+        import asyncio
+        from fastapi.testclient import TestClient
+        from backend.app import app
+        import backend.app
+        
+        original_get_db = backend.app.get_db_connection
+        backend.app.get_db_connection = lambda: get_db_connection(self.db_path)
+        
+        try:
+            # Seed API key in temp DB
+            conn = get_db_connection(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("INSERT OR REPLACE INTO user_profiles (key, value) VALUES ('api_key', 'test_secret_key_123')")
+            conn.commit()
+            conn.close()
+            
+            client = TestClient(app)
+            
+            # 1. Local Request (TestClient defaults to localhost/testclient)
+            # Should bypass auth and return status success
+            resp = client.get("/api/setup/status")
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.json().get("api_key"), "test_secret_key_123")
+            
+            # 2. Remote Request (Simulated by mock request parameters)
+            class MockClient:
+                def __init__(self, host):
+                    self.host = host
+            class MockRequest:
+                def __init__(self, path, host, headers=None):
+                    self.url = self
+                    self.path = path
+                    self.client = MockClient(host)
+                    self.headers = headers or {}
+                    
+            async def call_next(req):
+                from fastapi.responses import Response
+                return Response(status_code=200)
+                
+            from backend.app import security_middleware
+            
+            # Test local request via middleware directly
+            req_local = MockRequest("/api/tasks", "127.0.0.1")
+            res_local = asyncio.run(security_middleware(req_local, call_next))
+            self.assertEqual(res_local.status_code, 200)
+            
+            # Test remote request without key
+            req_remote_fail = MockRequest("/api/tasks", "192.168.1.50")
+            res_remote_fail = asyncio.run(security_middleware(req_remote_fail, call_next))
+            self.assertEqual(res_remote_fail.status_code, 401)
+            
+            # Test remote request with wrong key
+            req_remote_wrong = MockRequest("/api/tasks", "192.168.1.50", headers={"X-API-Key": "wrong"})
+            res_remote_wrong = asyncio.run(security_middleware(req_remote_wrong, call_next))
+            self.assertEqual(res_remote_wrong.status_code, 401)
+            
+            # Test remote request with correct key
+            req_remote_ok = MockRequest("/api/tasks", "192.168.1.50", headers={"X-API-Key": "test_secret_key_123"})
+            res_remote_ok = asyncio.run(security_middleware(req_remote_ok, call_next))
+            self.assertEqual(res_remote_ok.status_code, 200)
+            print("[OK] Remote authorization checks and localhost security bypass verified successfully.")
+            
+        finally:
+            backend.app.get_db_connection = original_get_db
  
 if __name__ == "__main__":
     unittest.main()

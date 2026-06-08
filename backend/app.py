@@ -137,17 +137,94 @@ try:
 except Exception as diag_err:
     logger.error(f"Failed to print startup diagnostics: {diag_err}")
 
+def get_localtunnel_url() -> Optional[str]:
+    log_dir = os.path.join(os.path.expanduser("~"), ".quantime")
+    log_file = os.path.join(log_dir, "localtunnel.log")
+    if os.path.exists(log_file):
+        try:
+            with open(log_file, "r") as f:
+                lines = f.readlines()
+            for line in reversed(lines):
+                if "your url is:" in line:
+                    parts = line.split("your url is:")
+                    if len(parts) > 1:
+                        url = parts[1].strip()
+                        if url:
+                            return url
+        except Exception:
+            pass
+    return None
+
 # Initialize FastAPI Application
 app = FastAPI(title="Quantime Gateway API", version="1.2.0")
 
 # Configure Cross-Origin Resource Sharing (CORS) for development UI access
+origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
+# Add persistent tunnel subdomain origin
+try:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM user_profiles WHERE key = 'tunnel_subdomain'")
+    row = cursor.fetchone()
+    if row and row["value"]:
+        origins.append(f"https://{row['value']}.localtunnel.me")
+    conn.close()
+except Exception:
+    pass
+
+# Add current active tunnel URL if available
+tunnel_url = get_localtunnel_url()
+if tunnel_url:
+    origins.append(tunnel_url.rstrip("/"))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Authentication & Security Middleware for remote Localtunnel requests
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    client_host = request.client.host if request.client else "unknown"
+    is_local = client_host in ("127.0.0.1", "localhost", "::1", "testclient")
+    
+    path = request.url.path
+    if path in ("/health", "/docs", "/openapi.json", "/auth/callback", "/auth/url") or path.startswith("/static"):
+        return await call_next(request)
+        
+    if not is_local:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM user_profiles WHERE key = 'api_key'")
+        row = cursor.fetchone()
+        api_key = row["value"] if row else None
+        conn.close()
+        
+        provided_key = request.headers.get("X-API-Key")
+        if not provided_key:
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                provided_key = auth_header[7:]
+            else:
+                provided_key = auth_header
+                
+        if not api_key or provided_key != api_key:
+            return JSONResponse(
+                status_code=401,
+                content={"error": "Unauthorized: External access requires a valid API key."}
+            )
+            
+    response = await call_next(request)
+    return response
 
 # Initialize local SQLite database schemas
 init_db()
@@ -487,6 +564,10 @@ class TaskSchema(BaseModel):
     energy_level: str = "none"
     constraint_type: str = "soft"
     status: str = "pending"
+    recurrence_pattern: Optional[str] = None
+    recurrence_count: Optional[int] = None
+    recurrence_group_id: Optional[str] = None
+    recurrence_rule: Optional[str] = None
 
 class TaskUpdateSchema(BaseModel):
     status: Optional[str] = None
@@ -872,26 +953,8 @@ def get_hardware_info():
     """Queries and returns host GPU name and VRAM size."""
     return get_gpu_metadata()
 
-def get_localtunnel_url() -> Optional[str]:
-    log_dir = os.path.join(os.path.expanduser("~"), ".quantime")
-    log_file = os.path.join(log_dir, "localtunnel.log")
-    if os.path.exists(log_file):
-        try:
-            with open(log_file, "r") as f:
-                lines = f.readlines()
-            for line in reversed(lines):
-                if "your url is:" in line:
-                    parts = line.split("your url is:")
-                    if len(parts) > 1:
-                        url = parts[1].strip()
-                        if url:
-                            return url
-        except Exception:
-            pass
-    return None
-
 @app.get("/api/setup/status")
-def get_setup_status():
+def get_setup_status(request: Request):
     """Checks configuration status including credentials and Ollama models."""
     from backend.google_client import CREDENTIALS_FILE
     has_credentials = os.path.exists(CREDENTIALS_FILE)
@@ -910,13 +973,26 @@ def get_setup_status():
     except Exception:
         pass
         
-    return {
+    status = {
         "has_credentials": has_credentials,
         "has_model": has_model,
         "tunnel_url": get_localtunnel_url(),
         "ollama_status": model_loading_status["ollama"],
         "kokoro_status": model_loading_status["kokoro"]
     }
+    
+    # Serve API key ONLY to local requests so local UI can fetch it at startup
+    client_host = request.client.host if request.client else "unknown"
+    if client_host in ("127.0.0.1", "localhost", "::1", "testclient"):
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM user_profiles WHERE key = 'api_key'")
+        row = cursor.fetchone()
+        if row:
+            status["api_key"] = row["value"]
+        conn.close()
+        
+    return status
 
 
 @app.post("/api/setup/pull-model")
@@ -1067,40 +1143,172 @@ def list_tasks(start_date: str = "2026-06-01T00:00:00Z", end_date: str = "2026-0
 
 @app.post("/api/tasks")
 def create_task(task: TaskSchema):
-    """Registers task item locally and mirrors to Firestore."""
+    """Registers task item locally (supporting recurrences) and mirrors to Firestore."""
+    import datetime
+    import random
+    
+    # Parse times
+    try:
+        start_dt = datetime.datetime.fromisoformat(task.start_time.replace('Z', '+00:00'))
+        end_dt = datetime.datetime.fromisoformat(task.end_time.replace('Z', '+00:00'))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid ISO start_time/end_time format: {e}")
+        
+    duration = end_dt - start_dt
+    
+    # Check if Google Calendar is linked and active
+    from backend.google_client import GoogleCalendarSync, GoogleOAuthManager
+    token = GoogleOAuthManager.get_valid_access_token()
+    
+    rrule = None
+    if task.recurrence_pattern and task.recurrence_pattern.lower() != 'none':
+        pattern = task.recurrence_pattern.lower()
+        count = task.recurrence_count or 10
+        if pattern == 'daily':
+            rrule = f"RRULE:FREQ=DAILY;COUNT={count}"
+        elif pattern == 'weekly':
+            rrule = f"RRULE:FREQ=WEEKLY;COUNT={count}"
+        elif pattern == 'monthly':
+            rrule = f"RRULE:FREQ=MONTHLY;COUNT={count}"
+
+    if token:
+        # PUSH to Google Calendar
+        event_id = GoogleCalendarSync.insert_calendar_event(
+            summary=task.title,
+            start_time=task.start_time,
+            end_time=task.end_time,
+            description=task.description or "",
+            recurrence_rule=rrule
+        )
+        if event_id:
+            # Sync calendar events immediately to pull down new tasks/instances
+            GoogleCalendarSync.sync_next_7_days()
+            return {"status": "success", "message": "Task successfully created and synced with Google Calendar.", "gcal_event_id": event_id}
+
+    # LOCAL/OFFLINE GENERATION FALLBACK
     conn = get_db_connection()
     cursor = conn.cursor()
+    tasks_to_insert = []
     try:
-        cursor.execute("""
-            INSERT INTO tasks (id, title, description, start_time, end_time, energy_level, constraint_type, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (task.id, task.title, task.description, task.start_time, task.end_time, task.energy_level, task.constraint_type, task.status, time.time(), time.time()))
+        rec_group_id = f"rec_{int(time.time())}_{random.randint(1000, 9999)}" if rrule else None
+        
+        if rrule:
+            count = task.recurrence_count or 10
+            curr_start = start_dt
+            curr_end = end_dt
+            for idx in range(count):
+                task_id = f"task_{int(time.time())}_{idx}_{random.randint(1000, 9999)}"
+                tasks_to_insert.append((
+                    task_id,
+                    task.title,
+                    task.description,
+                    curr_start.isoformat().replace('+00:00', 'Z'),
+                    curr_end.isoformat().replace('+00:00', 'Z'),
+                    task.energy_level,
+                    task.constraint_type,
+                    task.status,
+                    rec_group_id,
+                    rrule,
+                    time.time(),
+                    time.time()
+                ))
+                if task.recurrence_pattern.lower() == 'daily':
+                    curr_start += datetime.timedelta(days=1)
+                    curr_end += datetime.timedelta(days=1)
+                elif task.recurrence_pattern.lower() == 'weekly':
+                    curr_start += datetime.timedelta(weeks=1)
+                    curr_end += datetime.timedelta(weeks=1)
+                elif task.recurrence_pattern.lower() == 'monthly':
+                    year = curr_start.year + (curr_start.month // 12)
+                    month = (curr_start.month % 12) + 1
+                    try:
+                        curr_start = curr_start.replace(year=year, month=month)
+                    except ValueError:
+                        curr_start = curr_start + datetime.timedelta(days=30)
+                    curr_end = curr_start + duration
+        else:
+            tasks_to_insert.append((
+                task.id,
+                task.title,
+                task.description,
+                task.start_time,
+                task.end_time,
+                task.energy_level,
+                task.constraint_type,
+                task.status,
+                task.recurrence_group_id,
+                task.recurrence_rule,
+                time.time(),
+                time.time()
+            ))
+
+        for t in tasks_to_insert:
+            cursor.execute("""
+                INSERT INTO tasks (id, title, description, start_time, end_time, energy_level, constraint_type, status, recurrence_group_id, recurrence_rule, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, t)
         conn.commit()
     except sqlite3.IntegrityError:
         conn.close()
         raise HTTPException(status_code=400, detail="Conflict: Task ID already exists.")
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
     conn.close()
     
-    # Mirror update to Firestore
+    # Mirror updates to Firestore
     if db_firestore is not None:
-        task_ref = db_firestore.collection("users").document(MOCK_USER_ID).collection("tasks").document(task.id)
-        task_ref.set(task.dict())
-        
-    return {"status": "success", "task": task.dict()}
+        try:
+            for t in tasks_to_insert:
+                task_ref = db_firestore.collection("users").document(MOCK_USER_ID).collection("tasks").document(t[0])
+                task_ref.set({
+                    "id": t[0],
+                    "title": t[1],
+                    "description": t[2],
+                    "start_time": t[3],
+                    "end_time": t[4],
+                    "energy_level": t[5],
+                    "constraint_type": t[6],
+                    "status": t[7],
+                    "recurrence_group_id": t[8],
+                    "recurrence_rule": t[9]
+                })
+        except Exception as fe:
+            logger.error(f"Failed to mirror task creation to Firestore: {fe}")
+            
+    return {"status": "success", "tasks_created": len(tasks_to_insert)}
 
 @app.delete("/api/tasks/{task_id}")
-def delete_task_endpoint(task_id: str):
+def delete_task_endpoint(task_id: str, target: str = "single"):
     """Deletes a task from the local database and mirrors the deletion to Firestore."""
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT id, title FROM tasks WHERE id = ?", (task_id,))
+        cursor.execute("SELECT id, title, source_event_id, recurrence_group_id FROM tasks WHERE id = ?", (task_id,))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Task not found.")
             
-        cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
-        cursor.execute("DELETE FROM task_dependencies WHERE task_id = ? OR depends_on_task_id = ?", (task_id, task_id))
+        tasks_to_delete = []
+        if target == "series" and row["recurrence_group_id"]:
+            cursor.execute("SELECT id, source_event_id FROM tasks WHERE recurrence_group_id = ?", (row["recurrence_group_id"],))
+            tasks_to_delete = [dict(r) for r in cursor.fetchall()]
+        elif target == "series" and row["source_event_id"]:
+            parent_id = row["source_event_id"].split('_')[0]
+            cursor.execute("SELECT id, source_event_id FROM tasks WHERE source_event_id LIKE ?", (f"{parent_id}%",))
+            tasks_to_delete = [dict(r) for r in cursor.fetchall()]
+            from backend.google_client import GoogleCalendarSync
+            GoogleCalendarSync.delete_calendar_event(parent_id)
+        else:
+            tasks_to_delete = [{"id": row["id"], "source_event_id": row["source_event_id"]}]
+            if row["source_event_id"]:
+                from backend.google_client import GoogleCalendarSync
+                GoogleCalendarSync.delete_calendar_event(row["source_event_id"])
+                
+        for t in tasks_to_delete:
+            cursor.execute("DELETE FROM tasks WHERE id = ?", (t["id"],))
+            cursor.execute("DELETE FROM task_dependencies WHERE task_id = ? OR depends_on_task_id = ?", (t["id"], t["id"]))
+            
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -1111,61 +1319,82 @@ def delete_task_endpoint(task_id: str):
     # Mirror deletion to Firestore
     if db_firestore is not None:
         try:
-            task_ref = db_firestore.collection("users").document(MOCK_USER_ID).collection("tasks").document(task_id)
-            task_ref.delete()
+            for t in tasks_to_delete:
+                task_ref = db_firestore.collection("users").document(MOCK_USER_ID).collection("tasks").document(t["id"])
+                task_ref.delete()
         except Exception as fe:
             logger.error(f"Failed to mirror task deletion to Firestore: {fe}")
             
-    return {"status": "success", "message": f"Task '{row['title']}' deleted successfully."}
+    return {"status": "success", "message": f"Deleted {len(tasks_to_delete)} task(s) successfully."}
 
 @app.patch("/api/tasks/{task_id}")
-def update_task_endpoint(task_id: str, payload: TaskUpdateSchema):
+def update_task_endpoint(task_id: str, payload: TaskUpdateSchema, target: str = "single"):
     """Updates a task's fields locally and mirrors to Firestore."""
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT id, title, status, source_event_id, start_time, end_time FROM tasks WHERE id = ?", (task_id,))
+        cursor.execute("SELECT id, title, status, source_event_id, recurrence_group_id, start_time, end_time FROM tasks WHERE id = ?", (task_id,))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Task not found.")
             
-        update_fields = []
-        params = []
-        if payload.status is not None:
-            update_fields.append("status = ?")
-            params.append(payload.status)
-        if payload.title is not None:
-            update_fields.append("title = ?")
-            params.append(payload.title)
-        if payload.start_time is not None:
-            update_fields.append("start_time = ?")
-            params.append(payload.start_time)
-        if payload.end_time is not None:
-            update_fields.append("end_time = ?")
-            params.append(payload.end_time)
+        tasks_to_update = []
+        if target == "series" and row["recurrence_group_id"]:
+            cursor.execute("SELECT id, source_event_id, start_time, end_time, title FROM tasks WHERE recurrence_group_id = ?", (row["recurrence_group_id"],))
+            tasks_to_update = [dict(r) for r in cursor.fetchall()]
+        elif target == "series" and row["source_event_id"]:
+            parent_id = row["source_event_id"].split('_')[0]
+            cursor.execute("SELECT id, source_event_id, start_time, end_time, title FROM tasks WHERE source_event_id LIKE ?", (f"{parent_id}%",))
+            tasks_to_update = [dict(r) for r in cursor.fetchall()]
+        else:
+            tasks_to_update = [dict(row)]
             
-        if not update_fields:
-            raise HTTPException(status_code=400, detail="No fields to update.")
-            
-        update_fields.append("updated_at = ?")
-        params.append(time.time())
-        params.append(task_id)
-        
-        query = f"UPDATE tasks SET {', '.join(update_fields)} WHERE id = ?"
-        cursor.execute(query, tuple(params))
-        
-        # If task is completed and Google Calendar sync is active, update Google Calendar
-        if payload.status == "completed" and row["source_event_id"]:
-            try:
-                GoogleCalendarSync.patch_calendar_event(
-                    row["source_event_id"], 
-                    row["start_time"], 
-                    row["end_time"], 
-                    f"[COMPLETED] {row['title']}"
-                )
-            except Exception as ge:
-                logger.error(f"Failed to patch calendar event on completion: {ge}")
+        for t in tasks_to_update:
+            update_fields = []
+            params = []
+            if payload.status is not None:
+                update_fields.append("status = ?")
+                params.append(payload.status)
+            if payload.title is not None:
+                update_fields.append("title = ?")
+                params.append(payload.title)
                 
+            if target == "single":
+                if payload.start_time is not None:
+                    update_fields.append("start_time = ?")
+                    params.append(payload.start_time)
+                if payload.end_time is not None:
+                    update_fields.append("end_time = ?")
+                    params.append(payload.end_time)
+            
+            if not update_fields:
+                continue
+                
+            update_fields.append("updated_at = ?")
+            params.append(time.time())
+            params.append(t["id"])
+            
+            query = f"UPDATE tasks SET {', '.join(update_fields)} WHERE id = ?"
+            cursor.execute(query, tuple(params))
+            
+            if t["source_event_id"]:
+                try:
+                    from backend.google_client import GoogleCalendarSync
+                    new_start = payload.start_time if (target == "single" and payload.start_time is not None) else t["start_time"]
+                    new_end = payload.end_time if (target == "single" and payload.end_time is not None) else t["end_time"]
+                    new_title = payload.title if payload.title is not None else t["title"]
+                    if payload.status == "completed":
+                        new_title = f"[COMPLETED] {new_title}"
+                        
+                    GoogleCalendarSync.patch_calendar_event(
+                        t["source_event_id"],
+                        new_start,
+                        new_end,
+                        new_title
+                    )
+                except Exception as ge:
+                    logger.error(f"Failed to patch calendar event during update: {ge}")
+                    
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -1176,12 +1405,18 @@ def update_task_endpoint(task_id: str, payload: TaskUpdateSchema):
     # Mirror update to Firestore
     if db_firestore is not None:
         try:
-            task_ref = db_firestore.collection("users").document(MOCK_USER_ID).collection("tasks").document(task_id)
-            task_ref.update({k: v for k, v in payload.dict().items() if v is not None})
+            for t in tasks_to_update:
+                task_ref = db_firestore.collection("users").document(MOCK_USER_ID).collection("tasks").document(t["id"])
+                update_data = {k: v for k, v in payload.dict().items() if v is not None}
+                if target == "series":
+                    update_data.pop("start_time", None)
+                    update_data.pop("end_time", None)
+                if update_data:
+                    task_ref.update(update_data)
         except Exception as fe:
             logger.error(f"Failed to mirror task update to Firestore: {fe}")
             
-    return {"status": "success", "message": f"Task '{task_id}' updated successfully."}
+    return {"status": "success", "message": f"Updated {len(tasks_to_update)} task(s) successfully."}
 
 class ProposalCommitSchema(BaseModel):
     transaction_id: str
@@ -1374,6 +1609,21 @@ def handle_chat_message(prompt: str, background_tasks: BackgroundTasks):
 
 @app.websocket("/api/voice-chat")
 async def voice_chat_websocket(websocket: WebSocket):
+    # Verify API key for external websocket requests
+    client_host = websocket.client.host if websocket.client else "unknown"
+    is_local = client_host in ("127.0.0.1", "localhost", "::1")
+    if not is_local:
+        api_key_query = websocket.query_params.get("key")
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM user_profiles WHERE key = 'api_key'")
+        row = cursor.fetchone()
+        api_key = row["value"] if row else None
+        conn.close()
+        if not api_key or api_key_query != api_key:
+            await websocket.close(code=4003)
+            return
+
     await websocket.accept()
     logger.info("Voice chat WebSocket connection established.")
     

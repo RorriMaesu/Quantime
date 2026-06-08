@@ -348,25 +348,24 @@ def create_task_dependency(task_id: str, depends_on_task_id: str) -> Dict[str, A
     finally:
         conn.close()
 
-def create_task(title: str, start_time: str, end_time: str, description: str = "", energy_level: str = "none", constraint_type: str = "soft", ignore_conflicts: bool = False) -> Dict[str, Any]:
+def create_task(title: str, start_time: str, end_time: str, description: str = "", energy_level: str = "none", constraint_type: str = "soft", ignore_conflicts: bool = False, recurrence_pattern: str = "none", recurrence_count: Optional[int] = None) -> Dict[str, Any]:
     """
-    Creates a new schedule task locally and mirrors it to Firestore if active.
+    Creates a new schedule task locally, supporting recurrence, and mirrors to Firestore/Google Calendar.
     """
-    logger.info(f"Ollama Agent executing: create_task({title}, {start_time}, {end_time}, ignore_conflicts={ignore_conflicts})")
+    logger.info(f"Ollama Agent executing: create_task({title}, {start_time}, {end_time}, ignore_conflicts={ignore_conflicts}, recurrence={recurrence_pattern})")
     
     import datetime
+    import random
+    
     try:
         task_start = datetime.datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-        now = datetime.datetime.now().astimezone()
-        if task_start < now:
-            return {
-                "status": "error",
-                "message": f"Conflict: Cannot schedule task in the past. Staged start_time '{start_time}' is before current time '{now.isoformat()}'."
-            }
+        task_end = datetime.datetime.fromisoformat(end_time.replace('Z', '+00:00'))
     except Exception as e:
-        logger.error(f"Error checking start_time bounds: {e}")
-
-    # Check for overlapping scheduling conflicts
+        return {"status": "error", "message": f"Invalid start_time/end_time format: {e}"}
+        
+    duration = task_end - task_start
+    
+    # Check for overlapping scheduling conflicts (only for the first instance for simplicity)
     if not ignore_conflicts:
         conflicts = check_overlaps(None, start_time, end_time)
         if conflicts:
@@ -377,41 +376,125 @@ def create_task(title: str, start_time: str, end_time: str, description: str = "
                            f"To force this change, set ignore_conflicts=True, or call calculate_schedule_proposals to reschedule."
             }
 
-    import random
-    task_id = f"task_{int(time.time())}_{random.randint(1000, 9999)}"
+    from backend.google_client import GoogleCalendarSync, GoogleOAuthManager
+    token = GoogleOAuthManager.get_valid_access_token()
     
+    rrule = None
+    if recurrence_pattern and recurrence_pattern.lower() != 'none':
+        pattern = recurrence_pattern.lower()
+        count = recurrence_count or 10
+        if pattern == 'daily':
+            rrule = f"RRULE:FREQ=DAILY;COUNT={count}"
+        elif pattern == 'weekly':
+            rrule = f"RRULE:FREQ=WEEKLY;COUNT={count}"
+        elif pattern == 'monthly':
+            rrule = f"RRULE:FREQ=MONTHLY;COUNT={count}"
+
+    if token:
+        # PUSH to Google Calendar
+        event_id = GoogleCalendarSync.insert_calendar_event(
+            summary=title,
+            start_time=start_time,
+            end_time=end_time,
+            description=description or "",
+            recurrence_rule=rrule
+        )
+        if event_id:
+            GoogleCalendarSync.sync_next_7_days()
+            return {"status": "success", "message": f"Task '{title}' successfully created and synced with Google Calendar.", "gcal_event_id": event_id}
+
+    # Fallback to local DB creation
     conn = get_db_connection()
     cursor = conn.cursor()
+    tasks_to_insert = []
     try:
-        cursor.execute("""
-            INSERT INTO tasks (id, title, description, start_time, end_time, energy_level, constraint_type, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-        """, (task_id, title, description, start_time, end_time, energy_level, constraint_type, time.time(), time.time()))
+        rec_group_id = f"rec_{int(time.time())}_{random.randint(1000, 9999)}" if rrule else None
+        
+        if rrule:
+            count = recurrence_count or 10
+            curr_start = task_start
+            curr_end = task_end
+            for idx in range(count):
+                task_id = f"task_{int(time.time())}_{idx}_{random.randint(1000, 9999)}"
+                tasks_to_insert.append((
+                    task_id,
+                    title,
+                    description,
+                    curr_start.isoformat().replace('+00:00', 'Z'),
+                    curr_end.isoformat().replace('+00:00', 'Z'),
+                    energy_level,
+                    constraint_type,
+                    'pending',
+                    rec_group_id,
+                    rrule,
+                    time.time(),
+                    time.time()
+                ))
+                if recurrence_pattern.lower() == 'daily':
+                    curr_start += datetime.timedelta(days=1)
+                    curr_end += datetime.timedelta(days=1)
+                elif recurrence_pattern.lower() == 'weekly':
+                    curr_start += datetime.timedelta(weeks=1)
+                    curr_end += datetime.timedelta(weeks=1)
+                elif recurrence_pattern.lower() == 'monthly':
+                    year = curr_start.year + (curr_start.month // 12)
+                    month = (curr_start.month % 12) + 1
+                    try:
+                        curr_start = curr_start.replace(year=year, month=month)
+                    except ValueError:
+                        curr_start = curr_start + datetime.timedelta(days=30)
+                    curr_end = curr_start + duration
+        else:
+            task_id = f"task_{int(time.time())}_{random.randint(1000, 9999)}"
+            tasks_to_insert.append((
+                task_id,
+                title,
+                description,
+                start_time,
+                end_time,
+                energy_level,
+                constraint_type,
+                'pending',
+                None,
+                None,
+                time.time(),
+                time.time()
+            ))
+
+        for t in tasks_to_insert:
+            cursor.execute("""
+                INSERT INTO tasks (id, title, description, start_time, end_time, energy_level, constraint_type, status, recurrence_group_id, recurrence_rule, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, t)
         conn.commit()
     except sqlite3.IntegrityError:
         conn.close()
-        raise ValueError("Conflict: Task ID already exists.")
-    conn.close()
-    
-    # Mirror update to Firestore
+        return {"status": "error", "message": "Conflict: Task ID already exists."}
+    finally:
+        conn.close()
+        
+    # Mirror updates to Firestore
     try:
         from backend.app import db_firestore, MOCK_USER_ID
         if db_firestore is not None:
-            task_ref = db_firestore.collection("users").document(MOCK_USER_ID).collection("tasks").document(task_id)
-            task_ref.set({
-                "id": task_id,
-                "title": title,
-                "description": description,
-                "start_time": start_time,
-                "end_time": end_time,
-                "energy_level": energy_level,
-                "constraint_type": constraint_type,
-                "status": "pending"
-            })
+            for t in tasks_to_insert:
+                task_ref = db_firestore.collection("users").document(MOCK_USER_ID).collection("tasks").document(t[0])
+                task_ref.set({
+                    "id": t[0],
+                    "title": t[1],
+                    "description": t[2],
+                    "start_time": t[3],
+                    "end_time": t[4],
+                    "energy_level": t[5],
+                    "constraint_type": t[6],
+                    "status": t[7],
+                    "recurrence_group_id": t[8],
+                    "recurrence_rule": t[9]
+                })
     except Exception as fe:
-        logger.error(f"Failed to mirror task creation to Firestore: {fe}")
+        logger.error(f"Failed to mirror tasks to Firestore: {fe}")
         
-    return {"status": "success", "task_id": task_id, "message": f"Task '{title}' created successfully from {start_time} to {end_time}."}
+    return {"status": "success", "task_id": tasks_to_insert[0][0], "message": f"Task '{title}' ({len(tasks_to_insert)} occurrences) created successfully."}
 
 def delete_task(task_id: str) -> Dict[str, Any]:
     """
@@ -963,7 +1046,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "create_task",
-            "description": "Create a new schedule task locally.",
+            "description": "Create a new schedule task locally, with optional recurrence parameters.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -973,7 +1056,9 @@ TOOL_SCHEMAS = [
                     "description": {"type": "string", "description": "Detailed description/notes for the task"},
                     "energy_level": {"type": "string", "enum": ["none", "crimson", "teal"], "description": "Energy band requirement"},
                     "constraint_type": {"type": "string", "enum": ["soft", "hard"], "description": "Priority type of constraint (soft: flexible, hard: immutable)"},
-                    "ignore_conflicts": {"type": "boolean", "description": "Set to true to force overlapping schedule times (defaults to false)"}
+                    "ignore_conflicts": {"type": "boolean", "description": "Set to true to force overlapping schedule times (defaults to false)"},
+                    "recurrence_pattern": {"type": "string", "enum": ["none", "daily", "weekly", "monthly"], "description": "Optional recurrence frequency pattern"},
+                    "recurrence_count": {"type": "integer", "description": "Number of occurrences to create for the series (optional, default: 10)"}
                 },
                 "required": ["title", "start_time", "end_time"]
             }
@@ -1115,6 +1200,7 @@ Behavioral Guidelines & Rules:
 8. **Conversational & Proactive**: Give clear summaries of actions you took, highlight what tools you executed, explain why you restructured the schedule, and outline any proposed adjustments clearly to the user.
 9. **No Scheduling in the Past**: You must NEVER create new tasks or modify existing tasks to start in the past relative to the current date-time context. Always verify the current time before choosing task time slots.
 10. **Calendar Date Math**: You must NEVER guess or calculate the day of the week for a specific calendar date yourself. If the user asks about a day of the week, a holiday, or asks you to perform calendar math (e.g. "what day is July 6th?", "what day is next Friday?", "what day is October 24th?"), you MUST call the `get_day_of_week` tool to compute the correct date and weekday.
+11. **Recurring Tasks**: When a user requests a repeating or recurring task (e.g. 'Piano lesson every Friday at 4pm for 5 weeks'), parse the frequency (e.g. `weekly`) and count (e.g. `5`), and call `create_task` with the appropriate `recurrence_pattern` and `recurrence_count` arguments. The backend will automatically generate the instances.
 """
 
 def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], audio_b64: Optional[str] = None) -> Generator[Tuple[str, str], None, None]:

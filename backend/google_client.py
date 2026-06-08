@@ -361,6 +361,44 @@ class GoogleCalendarSync:
             return []
 
     @staticmethod
+    def insert_calendar_event(summary: str, start_time: str, end_time: str, description: str = "", recurrence_rule: Optional[str] = None) -> Optional[str]:
+        """Inserts a new event into the primary Google calendar. Returns Google Event ID or mock ID."""
+        token = GoogleOAuthManager.get_valid_access_token()
+        if not token:
+            import uuid
+            mock_id = f"mock_{uuid.uuid4().hex[:12]}"
+            logger.warning(f"Mock calendar insertion (No OAuth token). Returning mock ID {mock_id}")
+            return mock_id
+
+        url = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+        payload = {
+            "summary": summary,
+            "description": description,
+            "start": {"dateTime": start_time},
+            "end": {"dateTime": end_time}
+        }
+        if recurrence_rule:
+            payload["recurrence"] = [recurrence_rule]
+
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                if resp.status in [200, 201]:
+                    res_data = json.loads(resp.read().decode("utf-8"))
+                    event_id = res_data.get("id")
+                    logger.info(f"Successfully inserted calendar event: {event_id}")
+                    return event_id
+        except Exception as e:
+            logger.error(f"Failed to insert calendar event to Google: {e}")
+        return None
+
+    @staticmethod
     def patch_calendar_event(event_id: str, new_start: str, new_end: str, summary: Optional[str] = None) -> bool:
         """Pushes schedule shifts back to Google Calendar via PATCH mutation API."""
         token = GoogleOAuthManager.get_valid_access_token()
@@ -392,6 +430,29 @@ class GoogleCalendarSync:
         except Exception as e:
             logger.error(f"Failed to push PATCH calendar updates: {e}")
             
+        return False
+
+    @staticmethod
+    def delete_calendar_event(event_id: str) -> bool:
+        """Deletes an event from Google Calendar."""
+        token = GoogleOAuthManager.get_valid_access_token()
+        if not token:
+            logger.warning(f"Mock delete executed for Google Calendar event {event_id} (No active OAuth token).")
+            return True
+            
+        url = f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{event_id}"
+        req = urllib.request.Request(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            method="DELETE"
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                if resp.status in [200, 204]:
+                    logger.info(f"Calendar Event {event_id} deleted successfully on Google Calendar API.")
+                    return True
+        except Exception as e:
+            logger.error(f"Failed to delete Google Calendar event: {e}")
         return False
 
 class GmailParser:

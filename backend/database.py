@@ -89,10 +89,22 @@ def init_db(db_path: str = DB_FILE) -> None:
         constraint_type TEXT CHECK(constraint_type IN ('hard', 'soft')) DEFAULT 'soft',
         status TEXT CHECK(status IN ('pending', 'completed')) DEFAULT 'pending',
         source_event_id TEXT,
+        recurrence_group_id TEXT,
+        recurrence_rule TEXT,
         created_at REAL NOT NULL,
         updated_at REAL NOT NULL
     )
     """)
+    
+    # Migrations for existing databases
+    try:
+        cursor.execute("ALTER TABLE tasks ADD COLUMN recurrence_group_id TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE tasks ADD COLUMN recurrence_rule TEXT")
+    except sqlite3.OperationalError:
+        pass
     
     # 2. Task Dependencies Table (to model Directed Acyclic Graph)
     cursor.execute("""
@@ -211,6 +223,13 @@ def init_db(db_path: str = DB_FILE) -> None:
         import uuid
         unique_sub = f"quantime-{uuid.uuid4().hex[:8]}"
         cursor.execute("INSERT INTO user_profiles (key, value) VALUES ('tunnel_subdomain', ?)", (unique_sub,))
+        
+    # Seed a persistent API key for Localtunnel authentication if missing
+    cursor.execute("SELECT COUNT(*) FROM user_profiles WHERE key = 'api_key'")
+    if cursor.fetchone()[0] == 0:
+        import secrets
+        secure_key = secrets.token_hex(32)
+        cursor.execute("INSERT INTO user_profiles (key, value) VALUES ('api_key', ?)", (secure_key,))
         
     conn.commit()
     conn.close()

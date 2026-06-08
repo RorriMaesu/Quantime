@@ -35,6 +35,21 @@ import { getFirestore, doc, onSnapshot, collection, addDoc, serverTimestamp } fr
 
 const API_BASE = ""; // User details fetched dynamically from backend profile settings
 
+// Global HTTP Fetch interceptor to automatically attach API key headers
+const originalFetch = window.fetch;
+window.fetch = async (url, options = {}) => {
+  const apiKey = localStorage.getItem("quantime_api_key");
+  if (apiKey && (typeof url === 'string' && (url.includes('/api/') || url.includes('/auth/')))) {
+    options.headers = options.headers || {};
+    if (options.headers instanceof Headers) {
+      options.headers.set('X-API-Key', apiKey);
+    } else {
+      options.headers['X-API-Key'] = apiKey;
+    }
+  }
+  return originalFetch(url, options);
+};
+
 // Firebase credentials placeholder
 const firebaseConfig = {
   apiKey: "MOCK_API_KEY",
@@ -92,6 +107,9 @@ export default function App() {
   const [newEnd, setNewEnd] = useState("");
   const [newEnergy, setNewEnergy] = useState("none");
   const [newConstraint, setNewConstraint] = useState("soft");
+  const [recurrencePattern, setRecurrencePattern] = useState("none");
+  const [recurrenceCount, setRecurrenceCount] = useState(10);
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem("quantime_api_key") || "");
   const [viewMode, setViewMode] = useState("timeline"); // timeline or calendar
   const [visibleDate, setVisibleDate] = useState(new Date()); // reference visible month
   const [selectedDate, setSelectedDate] = useState(new Date()); // highlighted day
@@ -132,7 +150,9 @@ export default function App() {
       } else {
         wsUrl = `${protocol}//${window.location.host}/api/voice-chat`;
       }
-      const ws = new WebSocket(wsUrl);
+      const key = localStorage.getItem("quantime_api_key");
+      const wsUrlWithKey = key ? `${wsUrl}?key=${key}` : wsUrl;
+      const ws = new WebSocket(wsUrlWithKey);
       wsRef.current = ws;
       
       ws.onopen = async () => {
@@ -685,6 +705,20 @@ export default function App() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chats]);
 
+  // Intercept API key in URL parameters on startup
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const keyParam = params.get("key");
+    if (keyParam) {
+      localStorage.setItem("quantime_api_key", keyParam);
+      setApiKey(keyParam);
+      params.delete("key");
+      const cleanSearch = params.toString();
+      const newUrl = window.location.pathname + (cleanSearch ? "?" + cleanSearch : "");
+      window.history.replaceState({}, document.title, newUrl);
+    }
+  }, []);
+
   // Fetch user profile and chat history on startup
   useEffect(() => {
     const checkSetupStatus = async () => {
@@ -696,6 +730,10 @@ export default function App() {
           setHasModel(data.has_model);
           if (data.tunnel_url) {
             setTunnelUrl(data.tunnel_url);
+          }
+          if (data.api_key) {
+            localStorage.setItem("quantime_api_key", data.api_key);
+            setApiKey(data.api_key);
           }
           
           if (!data.has_model) {
@@ -1115,7 +1153,9 @@ export default function App() {
       end_time: new Date(newEnd).toISOString(),
       energy_level: newEnergy,
       constraint_type: newConstraint,
-      status: 'pending'
+      status: 'pending',
+      recurrence_pattern: recurrencePattern,
+      recurrence_count: recurrencePattern !== 'none' ? parseInt(recurrenceCount) || 10 : null
     };
 
     try {
@@ -1131,6 +1171,8 @@ export default function App() {
         setNewEnd("");
         setNewEnergy("none");
         setNewConstraint("soft");
+        setRecurrencePattern("none");
+        setRecurrenceCount(10);
         setShowAddForm(false);
         fetchTasks();
       }
@@ -1140,9 +1182,18 @@ export default function App() {
   };
 
   const handleDeleteTask = async (taskId) => {
-    if (!window.confirm("Are you sure you want to delete this task?")) return;
+    const task = tasks.find(t => t.id === taskId);
+    let target = "single";
+    if (task && (task.recurrence_group_id || task.source_event_id)) {
+      const choice = window.prompt("This is a recurring task. Type 'series' to delete the ENTIRE SERIES, or 'single' to delete ONLY THIS OCCURRENCE:", "single");
+      if (choice === null) return;
+      target = choice.trim().toLowerCase() === "series" ? "series" : "single";
+    } else {
+      if (!window.confirm("Are you sure you want to delete this task?")) return;
+    }
+    
     try {
-      const resp = await fetch(`${API_BASE}/api/tasks/${taskId}`, {
+      const resp = await fetch(`${API_BASE}/api/tasks/${taskId}?target=${target}`, {
         method: 'DELETE'
       });
       if (resp.ok) {
@@ -2900,6 +2951,36 @@ export default function App() {
                   </select>
                 </div>
               </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-1 font-semibold">Recurrence Frequency</label>
+                  <select 
+                    value={recurrencePattern}
+                    onChange={(e) => setRecurrencePattern(e.target.value)}
+                    className="w-full bg-gray-900 border border-gray-800 rounded-xl p-3 text-xs text-gray-100 focus:outline-none"
+                  >
+                    <option value="none">Does not repeat</option>
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                </div>
+                {recurrencePattern !== 'none' && (
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-1 font-semibold">Occurrences Count</label>
+                    <input 
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={recurrenceCount}
+                      onChange={(e) => setRecurrenceCount(e.target.value)}
+                      className="w-full bg-gray-900 border border-gray-800 rounded-xl p-3 text-xs text-gray-100 focus:outline-none focus:border-indigo-500"
+                      required
+                    />
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="flex space-x-3 pt-2">
@@ -2958,14 +3039,20 @@ export default function App() {
                   <div className="flex flex-col items-center justify-center space-y-3 w-full">
                     <div className="p-2.5 bg-white rounded-xl shadow-glow transition-transform duration-300 hover:scale-105">
                       <img 
-                        src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(tunnelUrl)}`} 
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(apiKey ? `${tunnelUrl}?key=${apiKey}` : tunnelUrl)}`} 
                         alt="Quantime Mobile Link QR Code"
                         className="w-[140px] h-[140px] block"
                       />
                     </div>
-                    <div className="text-center">
-                      <p className="font-mono text-xs select-all text-indigo-400 font-bold">{tunnelUrl}</p>
-                      <p className="text-[10px] text-gray-500 mt-1 font-medium">Scan with your phone camera to open instantly</p>
+                    <div className="text-center w-full px-2">
+                      <p className="font-mono text-xs select-all text-indigo-400 font-bold break-all">{tunnelUrl}</p>
+                      {apiKey && (
+                        <div className="mt-2 p-2 bg-gray-950/80 border border-gray-800/60 rounded-xl max-w-xs mx-auto">
+                          <p className="text-[9px] text-gray-400 font-bold uppercase tracking-wider">Access Token</p>
+                          <p className="font-mono text-[10px] text-indigo-300 font-bold select-all break-all">{apiKey}</p>
+                        </div>
+                      )}
+                      <p className="text-[10px] text-gray-500 mt-2 font-medium">Scan with your phone camera to open instantly</p>
                     </div>
                   </div>
                 )}
