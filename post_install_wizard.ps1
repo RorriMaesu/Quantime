@@ -93,7 +93,16 @@ function Get-GPUMetadata {
 
 # Terminate any running Quantime backend processes to free files and ports for setup
 Write-ProgressUpdate 1 "Stopping any active Quantime application instances..."
-Get-Process | Where-Object { $_.Path -and ($_.Path -like "*Quantime*") } | Stop-Process -Force -ErrorAction SilentlyContinue
+try {
+    $processes = Get-CimInstance Win32_Process -Filter "name = 'pythonw.exe' or name = 'python.exe' or name = 'node.exe'" -ErrorAction SilentlyContinue
+    foreach ($p in $processes) {
+        if ($p.ExecutablePath -and $p.ExecutablePath -like "*Quantime*") {
+            Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+    }
+} catch {
+    Get-Process | Where-Object { $_.Path -and ($_.Path -like "*Quantime*") } | Stop-Process -Force -ErrorAction SilentlyContinue
+}
 Start-Sleep -Seconds 1
 
 Write-ProgressUpdate 2 "Starting Quantime environment configuration..."
