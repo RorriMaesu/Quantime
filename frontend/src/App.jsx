@@ -600,7 +600,9 @@ export default function App() {
   }, [selectedDate]);
   const [showMobileGuide, setShowMobileGuide] = useState(false);
   const [publicIp, setPublicIp] = useState("Loading...");
+  const [tunnelUrl, setTunnelUrl] = useState("https://quantime-scheduler-green.loca.lt");
   const [hasCredentials, setHasCredentials] = useState(true);
+
   const [isGoogleLinked, setIsGoogleLinked] = useState(false);
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [hasModel, setHasModel] = useState(true);
@@ -776,6 +778,9 @@ export default function App() {
           const data = await resp.json();
           setHasCredentials(data.has_credentials);
           setHasModel(data.has_model);
+          if (data.tunnel_url) {
+            setTunnelUrl(data.tunnel_url);
+          }
           
           if (!data.has_model) {
             // Fetch hardware information
@@ -2913,13 +2918,13 @@ export default function App() {
               <div className="flex flex-col items-center justify-center p-4 bg-gray-900 border border-gray-800 rounded-2xl space-y-3">
                 <div className="p-2.5 bg-white rounded-xl shadow-glow transition-transform duration-300 hover:scale-105">
                   <img 
-                    src="https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=https%3A%2F%2Fquantime-scheduler-green.loca.lt" 
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(tunnelUrl)}`} 
                     alt="Quantime Mobile Link QR Code"
                     className="w-[140px] h-[140px] block"
                   />
                 </div>
                 <div className="text-center">
-                  <p className="font-mono text-xs select-all text-indigo-400 font-bold">https://quantime-scheduler-green.loca.lt</p>
+                  <p className="font-mono text-xs select-all text-indigo-400 font-bold">{tunnelUrl}</p>
                   <p className="text-[10px] text-gray-500 mt-1 font-medium">Scan with your phone camera to open instantly</p>
                 </div>
               </div>

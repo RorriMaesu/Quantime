@@ -765,6 +765,24 @@ def get_hardware_info():
     """Queries and returns host GPU name and VRAM size."""
     return get_gpu_metadata()
 
+def get_localtunnel_url() -> str:
+    log_dir = os.path.join(os.path.expanduser("~"), ".quantime")
+    log_file = os.path.join(log_dir, "localtunnel.log")
+    if os.path.exists(log_file):
+        try:
+            with open(log_file, "r") as f:
+                lines = f.readlines()
+            for line in reversed(lines):
+                if "your url is:" in line:
+                    parts = line.split("your url is:")
+                    if len(parts) > 1:
+                        url = parts[1].strip()
+                        if url:
+                            return url
+        except Exception:
+            pass
+    return "https://quantime-scheduler-green.loca.lt"  # Fallback
+
 @app.get("/api/setup/status")
 def get_setup_status():
     """Checks configuration status including credentials and Ollama models."""
@@ -787,8 +805,10 @@ def get_setup_status():
         
     return {
         "has_credentials": has_credentials,
-        "has_model": has_model
+        "has_model": has_model,
+        "tunnel_url": get_localtunnel_url()
     }
+
 
 @app.post("/api/setup/pull-model")
 def pull_model_endpoint(payload: PullModelSchema, background_tasks: BackgroundTasks):
