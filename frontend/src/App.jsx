@@ -114,6 +114,7 @@ export default function App() {
   const [editScope, setEditScope] = useState('single');
   const [recurringConfirm, setRecurringConfirm] = useState({ isOpen: false, taskId: null, actionType: 'delete', payload: null });
   const [recurrenceCount, setRecurrenceCount] = useState(10);
+  const [recurrenceDays, setRecurrenceDays] = useState([]); // Array of integers 0 = Monday, 6 = Sunday
   const [apiKey, setApiKey] = useState(() => localStorage.getItem("quantime_api_key") || "");
   const [viewMode, setViewMode] = useState("timeline"); // timeline or calendar
   const [visibleDate, setVisibleDate] = useState(new Date()); // reference visible month
@@ -1177,7 +1178,8 @@ export default function App() {
       constraint_type: newConstraint,
       status: 'pending',
       recurrence_pattern: recurrencePattern,
-      recurrence_count: recurrencePattern !== 'none' ? parseInt(recurrenceCount) || 10 : null
+      recurrence_count: recurrencePattern !== 'none' ? parseInt(recurrenceCount) || 10 : null,
+      recurrence_days: recurrencePattern === 'weekly' && recurrenceDays.length > 0 ? recurrenceDays : null
     };
 
     try {
@@ -1195,6 +1197,7 @@ export default function App() {
         setNewConstraint("soft");
         setRecurrencePattern("none");
         setRecurrenceCount(10);
+        setRecurrenceDays([]);
         setShowAddForm(false);
         fetchTasks();
       }
@@ -2186,6 +2189,33 @@ export default function App() {
                             <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
                             <span>Custom OAuth Secrets</span>
                           </button>
+                          <button 
+                            onClick={async () => {
+                              if (window.confirm("ARE YOU ABSOLUTELY SURE? This will permanently delete all tasks, routines, and task dependencies from the local database, Firestore, and synced Google Calendar events!")) {
+                                if (window.confirm("FINAL CONFIRMATION: Double check if you really want to clear the entire calendar?")) {
+                                  try {
+                                    const resp = await fetch(`${API_BASE}/api/tasks/clear`, {
+                                      method: 'DELETE'
+                                    });
+                                    if (resp.ok) {
+                                      alert("Calendar cleared successfully!");
+                                      fetchTasks();
+                                    } else {
+                                      alert("Failed to clear calendar.");
+                                    }
+                                  } catch (e) {
+                                    console.error("Failed to clear calendar", e);
+                                    alert("Error clearing calendar.");
+                                  }
+                                  setShowSettings(false);
+                                }
+                              }
+                            }}
+                            className="w-full text-left px-3 py-2 rounded-lg text-xs font-medium bg-red-950/45 hover:bg-red-900/40 text-red-300 border border-red-900/40 transition-all flex items-center space-x-2"
+                          >
+                            <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                            <span>Clear Calendar</span>
+                          </button>
                         </div>
                       )}
                     </div>
@@ -3117,6 +3147,46 @@ export default function App() {
                       />
                     </div>
                   )}
+                </div>
+              )}
+              {!isEditing && recurrencePattern === 'weekly' && (
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-3.5 space-y-2">
+                  <label className="block text-[10px] text-gray-400 font-bold uppercase tracking-wider">Recur on these Weekdays</label>
+                  <div className="flex justify-between gap-1">
+                    {[
+                      { label: "M", value: 0 },
+                      { label: "T", value: 1 },
+                      { label: "W", value: 2 },
+                      { label: "T", value: 3 },
+                      { label: "F", value: 4 },
+                      { label: "S", value: 5 },
+                      { label: "S", value: 6 }
+                    ].map((day) => {
+                      const isSelected = recurrenceDays.includes(day.value);
+                      return (
+                        <button
+                          key={day.value}
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              setRecurrenceDays(recurrenceDays.filter(d => d !== day.value));
+                            } else {
+                              setRecurrenceDays([...recurrenceDays, day.value].sort());
+                            }
+                          }}
+                          className={`w-9 h-9 rounded-lg flex items-center justify-center text-xs font-semibold border transition-all ${
+                            isSelected
+                              ? 'bg-indigo-600/20 border-indigo-500 text-indigo-300 font-bold'
+                              : 'bg-gray-950 border-gray-800 text-gray-400 hover:text-gray-250'
+                          }`}
+                        >
+                          {day.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               {isEditing && (
                 (() => {
                   const currentTask = tasks.find(t => t.id === editingTaskId);

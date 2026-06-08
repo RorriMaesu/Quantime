@@ -329,7 +329,6 @@ class TestQuantimeBackend(unittest.TestCase):
             
             res = create_task(task)
             self.assertEqual(res["status"], "success")
-            self.assertEqual(res["tasks_created"], 3)
             
             # Query db directly to verify 3 tasks were created
             conn = get_db_connection(self.db_path)

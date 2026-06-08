@@ -156,7 +156,7 @@ def get_localtunnel_url() -> Optional[str]:
     return None
 
 # Initialize FastAPI Application
-app = FastAPI(title="Quantime Gateway API", version="1.3.15")
+app = FastAPI(title="Quantime Gateway API", version="1.3.16")
 
 # Configure Cross-Origin Resource Sharing (CORS) for development UI access
 origins = [
@@ -568,6 +568,7 @@ class TaskSchema(BaseModel):
     recurrence_count: Optional[int] = None
     recurrence_group_id: Optional[str] = None
     recurrence_rule: Optional[str] = None
+    recurrence_days: Optional[List[int]] = None
 
 class TaskUpdateSchema(BaseModel):
     status: Optional[str] = None
@@ -1199,36 +1200,66 @@ def create_task(task: TaskSchema):
             count = task.recurrence_count or 10
             curr_start = start_dt
             curr_end = end_dt
-            for idx in range(count):
-                task_id = f"task_{int(time.time())}_{idx}_{random.randint(1000, 9999)}"
-                tasks_to_insert.append((
-                    task_id,
-                    task.title,
-                    task.description,
-                    curr_start.isoformat().replace('+00:00', 'Z'),
-                    curr_end.isoformat().replace('+00:00', 'Z'),
-                    task.energy_level,
-                    task.constraint_type,
-                    task.status,
-                    rec_group_id,
-                    rrule,
-                    time.time(),
-                    time.time()
-                ))
-                if task.recurrence_pattern.lower() == 'daily':
-                    curr_start += datetime.timedelta(days=1)
-                    curr_end += datetime.timedelta(days=1)
-                elif task.recurrence_pattern.lower() == 'weekly':
-                    curr_start += datetime.timedelta(weeks=1)
-                    curr_end += datetime.timedelta(weeks=1)
-                elif task.recurrence_pattern.lower() == 'monthly':
-                    year = curr_start.year + (curr_start.month // 12)
-                    month = (curr_start.month % 12) + 1
-                    try:
-                        curr_start = curr_start.replace(year=year, month=month)
-                    except ValueError:
-                        curr_start = curr_start + datetime.timedelta(days=30)
-                    curr_end = curr_start + duration
+            
+            # If recurrence_days is specified for weekly, filter/generate accordingly
+            days_filter = task.recurrence_days
+            if task.recurrence_pattern.lower() == 'weekly' and days_filter:
+                # We need to find the matching weekdays starting from curr_start
+                instances_created = 0
+                check_date = curr_start
+                while instances_created < count:
+                    # check_date.weekday() returns 0 for Monday to 6 for Sunday
+                    if check_date.weekday() in days_filter:
+                        task_id = f"task_{int(time.time())}_{instances_created}_{random.randint(1000, 9999)}"
+                        instance_start = check_date
+                        instance_end = check_date + duration
+                        tasks_to_insert.append((
+                            task_id,
+                            task.title,
+                            task.description,
+                            instance_start.isoformat().replace('+00:00', 'Z'),
+                            instance_end.isoformat().replace('+00:00', 'Z'),
+                            task.energy_level,
+                            task.constraint_type,
+                            task.status,
+                            rec_group_id,
+                            rrule,
+                            time.time(),
+                            time.time()
+                        ))
+                        instances_created += 1
+                    check_date += datetime.timedelta(days=1)
+            else:
+                for idx in range(count):
+                    task_id = f"task_{int(time.time())}_{idx}_{random.randint(1000, 9999)}"
+                    tasks_to_insert.append((
+                        task_id,
+                        task.title,
+                        task.description,
+                        curr_start.isoformat().replace('+00:00', 'Z'),
+                        curr_end.isoformat().replace('+00:00', 'Z'),
+                        task.energy_level,
+                        task.constraint_type,
+                        task.status,
+                        rec_group_id,
+                        rrule,
+                        time.time(),
+                        time.time()
+                    ))
+                    if task.recurrence_pattern.lower() == 'daily':
+                        curr_start += datetime.timedelta(days=1)
+                        curr_end += datetime.timedelta(days=1)
+                    elif task.recurrence_pattern.lower() == 'weekly':
+                        curr_start += datetime.timedelta(weeks=1)
+                        curr_end += datetime.timedelta(weeks=1)
+                    elif task.recurrence_pattern.lower() == 'monthly':
+                        year = curr_start.year + (curr_start.month // 12)
+                        month = (curr_start.month % 12) + 1
+                        try:
+                            curr_start = curr_start.replace(year=year, month=month)
+                        except ValueError:
+                            curr_start = curr_start + datetime.timedelta(days=30)
+                        curr_end = curr_start + duration
         else:
             tasks_to_insert.append((
                 task.id,
@@ -1817,6 +1848,41 @@ def delete_chats_endpoint():
             logger.error(f"Failed to clear Firestore chats subcollection: {fe}")
             
     return {"status": "success", "message": "Chat logs cleared successfully."}
+
+@app.delete("/api/tasks/clear")
+def clear_tasks_endpoint():
+    """Truncates the local tasks and task_dependencies tables, and clears them in Firestore and Google Calendar if linked."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # First, find Google Calendar source_event_ids to delete them if token is active
+        from backend.google_client import GoogleCalendarSync, GoogleOAuthManager
+        token = GoogleOAuthManager.get_valid_access_token()
+        if token:
+            cursor.execute("SELECT source_event_id FROM tasks WHERE source_event_id IS NOT NULL")
+            for r in cursor.fetchall():
+                GoogleCalendarSync.delete_calendar_event(r["source_event_id"])
+
+        cursor.execute("DELETE FROM tasks")
+        cursor.execute("DELETE FROM task_dependencies")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
+
+    # Clear Firestore tasks collection
+    if db_firestore is not None:
+        try:
+            tasks_ref = db_firestore.collection("users").document(MOCK_USER_ID).collection("tasks")
+            docs = tasks_ref.stream()
+            for doc in docs:
+                doc.reference.delete()
+        except Exception as fe:
+            logger.error(f"Failed to clear Firestore tasks: {fe}")
+
+    return {"status": "success", "message": "All tasks cleared successfully."}
 
 @app.get("/api/gmail")
 def list_unread_emails():

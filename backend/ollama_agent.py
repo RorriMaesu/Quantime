@@ -390,7 +390,7 @@ def create_task_dependency(task_id: str, depends_on_task_id: str) -> Dict[str, A
     finally:
         conn.close()
 
-def create_task(title: str, start_time: str, end_time: str, description: str = "", energy_level: str = "none", constraint_type: str = "soft", ignore_conflicts: bool = False, recurrence_pattern: str = "none", recurrence_count: Optional[int] = None) -> Dict[str, Any]:
+def create_task(title: str, start_time: str, end_time: str, description: str = "", energy_level: str = "none", constraint_type: str = "soft", ignore_conflicts: bool = False, recurrence_pattern: str = "none", recurrence_count: Optional[int] = None, recurrence_days: Optional[List[int]] = None) -> Dict[str, Any]:
     """
     Creates a new schedule task locally, supporting recurrence, and mirrors to Firestore/Google Calendar.
     """
@@ -456,36 +456,62 @@ def create_task(title: str, start_time: str, end_time: str, description: str = "
             count = recurrence_count or 10
             curr_start = task_start
             curr_end = task_end
-            for idx in range(count):
-                task_id = f"task_{int(time.time())}_{idx}_{random.randint(1000, 9999)}"
-                tasks_to_insert.append((
-                    task_id,
-                    title,
-                    description,
-                    curr_start.isoformat().replace('+00:00', 'Z'),
-                    curr_end.isoformat().replace('+00:00', 'Z'),
-                    energy_level,
-                    constraint_type,
-                    'pending',
-                    rec_group_id,
-                    rrule,
-                    time.time(),
-                    time.time()
-                ))
-                if recurrence_pattern.lower() == 'daily':
-                    curr_start += datetime.timedelta(days=1)
-                    curr_end += datetime.timedelta(days=1)
-                elif recurrence_pattern.lower() == 'weekly':
-                    curr_start += datetime.timedelta(weeks=1)
-                    curr_end += datetime.timedelta(weeks=1)
-                elif recurrence_pattern.lower() == 'monthly':
-                    year = curr_start.year + (curr_start.month // 12)
-                    month = (curr_start.month % 12) + 1
-                    try:
-                        curr_start = curr_start.replace(year=year, month=month)
-                    except ValueError:
-                        curr_start = curr_start + datetime.timedelta(days=30)
-                    curr_end = curr_start + duration
+            
+            if recurrence_pattern.lower() == 'weekly' and recurrence_days:
+                instances_created = 0
+                check_date = curr_start
+                while instances_created < count:
+                    if check_date.weekday() in recurrence_days:
+                        task_id = f"task_{int(time.time())}_{instances_created}_{random.randint(1000, 9999)}"
+                        instance_start = check_date
+                        instance_end = check_date + duration
+                        tasks_to_insert.append((
+                            task_id,
+                            title,
+                            description,
+                            instance_start.isoformat().replace('+00:00', 'Z'),
+                            instance_end.isoformat().replace('+00:00', 'Z'),
+                            energy_level,
+                            constraint_type,
+                            'pending',
+                            rec_group_id,
+                            rrule,
+                            time.time(),
+                            time.time()
+                        ))
+                        instances_created += 1
+                    check_date += datetime.timedelta(days=1)
+            else:
+                for idx in range(count):
+                    task_id = f"task_{int(time.time())}_{idx}_{random.randint(1000, 9999)}"
+                    tasks_to_insert.append((
+                        task_id,
+                        title,
+                        description,
+                        curr_start.isoformat().replace('+00:00', 'Z'),
+                        curr_end.isoformat().replace('+00:00', 'Z'),
+                        energy_level,
+                        constraint_type,
+                        'pending',
+                        rec_group_id,
+                        rrule,
+                        time.time(),
+                        time.time()
+                    ))
+                    if recurrence_pattern.lower() == 'daily':
+                        curr_start += datetime.timedelta(days=1)
+                        curr_end += datetime.timedelta(days=1)
+                    elif recurrence_pattern.lower() == 'weekly':
+                        curr_start += datetime.timedelta(weeks=1)
+                        curr_end += datetime.timedelta(weeks=1)
+                    elif recurrence_pattern.lower() == 'monthly':
+                        year = curr_start.year + (curr_start.month // 12)
+                        month = (curr_start.month % 12) + 1
+                        try:
+                            curr_start = curr_start.replace(year=year, month=month)
+                        except ValueError:
+                            curr_start = curr_start + datetime.timedelta(days=30)
+                        curr_end = curr_start + duration
         else:
             task_id = f"task_{int(time.time())}_{random.randint(1000, 9999)}"
             tasks_to_insert.append((
@@ -586,6 +612,43 @@ def delete_task(task_id: str, target: str = "single") -> Dict[str, Any]:
         return {"status": "success", "message": f"Successfully deleted {len(tasks_to_delete)} task(s) for '{row['title']}'."}
     finally:
         conn.close()
+
+def clear_calendar() -> Dict[str, Any]:
+    """
+    Clears all tasks and task dependencies from the local database, Google Calendar, and Firestore.
+    """
+    logger.info("Ollama Agent executing: clear_calendar()")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        from backend.google_client import GoogleCalendarSync, GoogleOAuthManager
+        token = GoogleOAuthManager.get_valid_access_token()
+        if token:
+            cursor.execute("SELECT source_event_id FROM tasks WHERE source_event_id IS NOT NULL")
+            for r in cursor.fetchall():
+                GoogleCalendarSync.delete_calendar_event(r["source_event_id"])
+
+        cursor.execute("DELETE FROM tasks")
+        cursor.execute("DELETE FROM task_dependencies")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error in clear_calendar: {e}")
+        return {"status": "error", "message": str(e)}
+    finally:
+        conn.close()
+
+    try:
+        from backend.app import db_firestore, MOCK_USER_ID
+        if db_firestore is not None:
+            tasks_ref = db_firestore.collection("users").document(MOCK_USER_ID).collection("tasks")
+            docs = tasks_ref.stream()
+            for doc in docs:
+                doc.reference.delete()
+    except Exception as fe:
+        logger.error(f"Failed to clear Firestore tasks: {fe}")
+
+    return {"status": "success", "message": "Successfully cleared all calendar events."}
 
 def update_task_metadata(task_id: str, title: Optional[str] = None, description: Optional[str] = None, energy_level: Optional[str] = None, constraint_type: Optional[str] = None, target: str = "single") -> Dict[str, Any]:
     """
@@ -1005,6 +1068,7 @@ TOOL_FUNCTIONS = {
     "create_task_dependency": create_task_dependency,
     "create_task": create_task,
     "delete_task": delete_task,
+    "clear_calendar": clear_calendar,
     "update_task_metadata": update_task_metadata,
     "fetch_unread_emails": fetch_unread_emails,
     "query_semantic_memory": query_semantic_memory,
@@ -1128,7 +1192,12 @@ TOOL_SCHEMAS = [
                     "constraint_type": {"type": "string", "enum": ["soft", "hard"], "description": "Priority type of constraint (soft: flexible, hard: immutable)"},
                     "ignore_conflicts": {"type": "boolean", "description": "Set to true to force overlapping schedule times (defaults to false)"},
                     "recurrence_pattern": {"type": "string", "enum": ["none", "daily", "weekly", "monthly"], "description": "Optional recurrence frequency pattern"},
-                    "recurrence_count": {"type": "integer", "description": "Number of occurrences to create for the series (optional, default: 10)"}
+                    "recurrence_count": {"type": "integer", "description": "Number of occurrences to create for the series (optional, default: 10)"},
+                    "recurrence_days": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Optional days of the week to repeat on for weekly pattern (0 = Monday, 1 = Tuesday, 2 = Wednesday, 3 = Thursday, 4 = Friday, 5 = Saturday, 6 = Sunday)."
+                    }
                 },
                 "required": ["title", "start_time", "end_time"]
             }
@@ -1146,6 +1215,17 @@ TOOL_SCHEMAS = [
                     "target": {"type": "string", "enum": ["single", "series"], "description": "Whether to delete just this single task occurrence ('single') or the entire routine series ('series'). Default is 'single'."}
                 },
                 "required": ["task_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "clear_calendar",
+            "description": "Clears and purges all tasks, routines, and task dependencies from the scheduler database, Firestore, and synced Google Calendar events.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
             }
         }
     },
@@ -1503,6 +1583,7 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], 
                     for tool_call in assistant_message["tool_calls"]:
                         func_name = tool_call["function"]["name"]
                         func_args = tool_call["function"]["arguments"]
+                        call_id = tool_call.get("id", f"call_{int(time.time() * 1050)}")
                         
                         yield ("thought", f"\n[Agent Triggered Tool: {func_name}({json.dumps(func_args)})]\n")
                         
@@ -1511,13 +1592,20 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], 
                             result = TOOL_FUNCTIONS[func_name](**func_args)
                             yield ("thought", f"[Tool Execution Success]\n")
                         except Exception as err:
-                            result = {"status": "error", "message": str(err)}
-                            yield ("thought", f"[Tool Execution Error: {str(err)}]\n")
+                            # Gemma 4 self-correction feedback loop: pass clear exception trace back to system context
+                            result = {
+                                "status": "error",
+                                "error_type": type(err).__name__,
+                                "message": str(err),
+                                "hint": "Please review your input arguments, handle conflicts accordingly, or call another tool to check schedule conditions."
+                            }
+                            yield ("thought", f"[Tool Execution Error: {str(err)} - Relayed to AI agent for self-correction]\n")
                             
                         current_messages.append({
-                            "role": "tool",
-                            "name": func_name,
-                            "content": json.dumps(result)
+                          "role": "tool",
+                          "tool_call_id": call_id,
+                          "name": func_name,
+                          "content": json.dumps(result)
                         })
                         
                     yield from chat_loop(current_messages, depth + 1)
