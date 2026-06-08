@@ -19,19 +19,23 @@ jobs:
 
       - name: Install Inno Setup
         run: |
-          Invoke-WebRequest -Uri "https://files.jrsoftware.org/is/6/innosetup-6.3.3.exe" -OutFile "innosetup-setup.exe"
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri "https://github.com/jrsoftware/issrc/releases/download/is-6_3_3/innosetup-6.3.3.exe" -OutFile "innosetup-setup.exe"
           Start-Process -FilePath "innosetup-setup.exe" -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -Wait
         shell: powershell
 
       - name: Build Installer with Inno Setup
         run: |
-          $iscc = (Get-ChildItem -Path "C:\Program Files*" -Filter "ISCC.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
-          if (-not $iscc) {
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+              $iscc = "C:\Program Files\Inno Setup 6\ISCC.exe"
+          }
+          if (-not (Test-Path $iscc)) {
               Write-Error "ISCC.exe not found on the runner!"
               exit 1
           }
           Write-Output "Located Inno Setup compiler at: $iscc"
-          & $iscc QuantimeSetup.iss
+          & "$iscc" QuantimeSetup.iss
         shell: powershell
 
       - name: Create Release & Upload Asset
