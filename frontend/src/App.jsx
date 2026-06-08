@@ -243,7 +243,13 @@ export default function App() {
 
   const startVoiceChat = async () => {
     try {
-      const wsUrl = `ws://${window.location.hostname}:8000/api/voice-chat`;
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      let wsUrl;
+      if (window.location.port === "5173") {
+        wsUrl = `${protocol}//${window.location.hostname}:8000/api/voice-chat`;
+      } else {
+        wsUrl = `${protocol}//${window.location.host}/api/voice-chat`;
+      }
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       
