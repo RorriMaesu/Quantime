@@ -4,7 +4,7 @@
 [Setup]
 AppId={{D37E618A-706E-45E4-A159-4E6DF9B53A04}}
 AppName=Quantime
-AppVersion=1.5.1
+AppVersion=1.5.2
 AppPublisher=RorriMaesu
 DefaultDirName={userpf}\Quantime
 DefaultGroupName=Quantime
@@ -20,8 +20,8 @@ ArchitecturesInstallIn64BitMode=x64
 Source: "*"; DestDir: "{app}"; Excludes: "backend\.venv,frontend\node_modules,quantime.db,backend\quantime.db,*chroma_db,backend\.env,dist,.git"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
-Name: "{group}\Quantime"; Filename: "{app}\backend\.venv\Scripts\pythonw.exe"; Parameters: """{app}\backend\tray_icon.py"""
-Name: "{commondesktop}\Quantime"; Filename: "{app}\backend\.venv\Scripts\pythonw.exe"; Parameters: """{app}\backend\tray_icon.py"""
+Name: "{group}\Quantime"; Filename: "{app}\backend\.venv\Scripts\pythonw.exe"; Parameters: """{app}\backend\tray_icon.py"""; IconFilename: "{app}\frontend\public\favicon.ico"
+Name: "{commondesktop}\Quantime"; Filename: "{app}\backend\.venv\Scripts\pythonw.exe"; Parameters: """{app}\backend\tray_icon.py"""; IconFilename: "{app}\frontend\public\favicon.ico"
 
 [Run]
 ; Launch Quantime post-install (after configuration wizard finishes)

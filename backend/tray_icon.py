@@ -99,7 +99,16 @@ tunnel_proc = None
 running = True
 
 def create_image():
-    # Generate a beautiful 64x64 indigo gradient circle with a white sparkle star
+    # Try to load the brand logo from frontend public assets
+    try:
+        logo_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "public", "logo192.png")
+        if os.path.exists(logo_path):
+            img = Image.open(logo_path)
+            return img.resize((64, 64), Image.Resampling.LANCZOS)
+    except Exception:
+        pass
+
+    # Fallback to generated shape
     width = 64
     height = 64
     image = Image.new('RGBA', (width, height), color=(0, 0, 0, 0)) # transparent bg
