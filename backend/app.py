@@ -610,13 +610,18 @@ def health_check():
     except Exception:
         ollama_connected = False
         
-    return {
-        "status": "healthy" if (db_connected and ollama_connected) else "degraded",
-        "database_connected": db_connected,
-        "ollama_connected": ollama_connected,
-        "circuit_breaker_tokens": round(circuit_breaker.tokens, 2),
-        "firebase_mode": "LIVE" if db_firestore is not None else "MOCK"
-    }
+    return JSONResponse(
+        content={
+            "status": "healthy" if (db_connected and ollama_connected) else "degraded",
+            "database_connected": db_connected,
+            "ollama_connected": ollama_connected,
+            "circuit_breaker_tokens": round(circuit_breaker.tokens, 2),
+            "firebase_mode": "LIVE" if db_firestore is not None else "MOCK"
+        },
+        headers={
+            "Access-Control-Allow-Origin": "*"
+        }
+    )
 
 class ProfileSchema(BaseModel):
     user_id: str
