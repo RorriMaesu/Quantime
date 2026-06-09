@@ -257,14 +257,30 @@ self.addEventListener('notificationclick', event => {
     // User clicked the main body of the notification - open/focus App Window
     event.waitUntil(
       self.clients.matchAll({ type: 'window' }).then(clientList => {
+        // Find if any window is open
         for (let i = 0; i < clientList.length; i++) {
           const client = clientList[i];
-          if (client.url === '/' && 'focus' in client) {
-            return client.focus();
+          if ('focus' in client) {
+            client.focus();
+            // Post a message to focus/expand chat panel if relevant
+            if (category === 'clarification' || category === 'important_email') {
+              client.postMessage({ type: 'EXPAND_CHAT_BOT' });
+            }
+            if (client.navigate) {
+              return client.navigate('/');
+            }
+            return;
           }
         }
         if (self.clients.openWindow) {
-          return self.clients.openWindow('/');
+          return self.clients.openWindow('/').then(windowClient => {
+            if (windowClient && (category === 'clarification' || category === 'important_email')) {
+              // Wait slightly for app to load then post expand chat message
+              setTimeout(() => {
+                windowClient.postMessage({ type: 'EXPAND_CHAT_BOT' });
+              }, 1000);
+            }
+          });
         }
       })
     );

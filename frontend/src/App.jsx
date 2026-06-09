@@ -1119,9 +1119,14 @@ export default function App() {
   useEffect(() => {
     if ('serviceWorker' in navigator) {
       const handleServiceWorkerMessage = (event) => {
-        if (event.data && event.data.type === 'PLAY_CHIME') {
-          if (!event.data.silent) {
-            playNotificationChime();
+        if (event.data) {
+          if (event.data.type === 'PLAY_CHIME') {
+            if (!event.data.silent) {
+              playNotificationChime();
+            }
+          } else if (event.data.type === 'EXPAND_CHAT_BOT') {
+            setIsChatExpanded(true);
+            setShowSettings(false);
           }
         }
       };
