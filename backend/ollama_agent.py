@@ -1742,7 +1742,10 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], 
                             if func_name in ["create_task", "modify_task_time"]:
                                 start_t = func_args.get("start_time") or func_args.get("new_start")
                                 end_t = func_args.get("end_time") or func_args.get("new_end")
-                                task_id = result.get("task_id") if func_name == "create_task" else func_args.get("task_id")
+                                if func_name == "create_task":
+                                    task_id = result.get("task_id") or (f"gcal_{result.get('gcal_event_id')}" if result.get("gcal_event_id") else None)
+                                else:
+                                    task_id = func_args.get("task_id")
                                 if start_t and end_t:
                                     conflicts = check_overlaps(task_id, start_t, end_t)
                                     if conflicts:
