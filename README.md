@@ -1,6 +1,18 @@
 # Quantime
 
-Quantime is a local-first, privacy-respecting intelligent scheduling engine and task manager. By combining a local reasoning LLM (Gemma 4 compiled via Ollama) with Google Workspace APIs (Calendar and Gmail), Quantime automatically syncs, schedules, and resolves timeline dependencies right on your desktop and syncs with your mobile device.
+Quantime is a local-first, privacy-respecting intelligent scheduling engine and task manager. By combining a local reasoning LLM (run via Ollama) with Google Workspace APIs (Calendar and Gmail), Quantime automatically syncs, schedules, and resolves timeline dependencies right on your desktop, and syncs seamlessly with your mobile device.
+
+---
+
+## Key Features
+
+*   **Intelligent Local Scheduling Agent**: Powered by custom agentic system prompts on models like **Gemma 4 (12B)** or **Gemma 2 (9B)** running locally via Ollama with an expanded 8,192 token context window.
+*   **Semantic RAG Memory**: Uses an embedded **Chroma Vector Database** alongside SQLite to store, search, and recall user habits, scheduling preferences, and task histories.
+*   **Real-time Voice Chat**: Speaks back using the high-performance local **Kokoro Text-to-Speech (TTS)** engine. Listens using local **SpeechRecognition (STT)** and intelligent **Silero Voice Activity Detection (VAD)** to allow fluid, natural vocal interrupts.
+*   **Sound Push Notifications**: Reminds you of upcoming scheduled blocks or focus sessions using Web Push standards (`pywebpush`) with customizable lead-time chimes.
+*   **Task Dependency & Routine Engine**: Resolves complex task relationships (e.g., *Task B* depends on *Task A*) and handles recurring routines automatically.
+*   **Bi-Directional Google Sync**: Fully integrates with Google Calendar and Gmail to sync scheduled events, stage scheduling proposals, and summarize relevant emails.
+*   **Cross-Device Mobile PWA**: Access your dashboard securely on the go via a secure LocalTunnel bridge without exposing your database to the public cloud.
 
 ---
 
@@ -11,10 +23,10 @@ Quantime is designed to be zero-config and beginner-friendly. You do **not** nee
 1.  **Download**: Go to the [Releases](https://github.com/RorriMaesu/Quantime/releases) page on our GitHub repository and download the latest `QuantimeSetup.exe` installer.
 2.  **Install**: Run `QuantimeSetup.exe` on your Windows PC. The installer will automatically:
     *   Check for and silently install **Ollama**.
-    *   Download the local Gemma LLM weights and compile the scheduling model.
-    *   Set up local portable Python and Node runtimes headlessly.
+    *   Initialize portable, isolated local Python 3.10 and Node.js runtimes.
+    *   Download local LLM weights and compile the scheduling model based on your system VRAM.
     *   Configure Windows Task Scheduler to start the service silently in the background on boot.
-    *   Create a desktop shortcut.
+    *   Create desktop and start menu shortcuts with our Möbius Q branding.
 3.  **Launch**: Click the desktop icon. Your default browser will open the Quantime PWA Dashboard (`http://localhost:5173`).
 
 ---
@@ -30,7 +42,7 @@ Quantime supports two sync modes: **Proxy Mode** (Default / Single-Click) and **
 4.  The system will authorize and immediately sync your next 7 days of calendar events.
 
 ### Option B: Custom OAuth Credentials (Advanced / Private)
-If you prefer not to use our centralized proxy helper and want to use your own private Google Cloud project:
+If you prefer to bypass our centralized helper and use your own private Google Cloud project:
 1.  Open [Google Cloud Console](https://console.cloud.google.com/) and create a project.
 2.  Navigate to **API & Services > Credentials > Create Credentials > OAuth client ID**. Set Application Type to **Web application** and add this Redirect URI:
     `http://localhost:8000/auth/callback`
@@ -44,9 +56,9 @@ If you prefer not to use our centralized proxy helper and want to use your own p
 
 To view your timeline and chats on the go:
 1.  Open the dashboard on your PC, click the profile settings, and select **Connect Mobile Phone**.
-2.  Copy the secure public gateway link (e.g. `https://quantime-scheduler-green.loca.lt`) and open it in your mobile browser.
+2.  Copy the secure public gateway link (e.g., `https://quantime-scheduler-green.loca.lt`) and open it in your mobile browser.
 3.  Input the displayed host PC public IP address to bypass the gateway reminder screen.
-4.  Tap **Add to Home Screen** inside Chrome (Android) or Safari (iOS) to install the standalone app!
+4.  Tap **Add to Home Screen** inside Chrome (Android) or Safari (iOS) to install the PWA with its native icon!
 
 ---
 
@@ -79,17 +91,30 @@ If you wish to clone the repository and run the codebase manually:
 ## System Architecture
 
 ```
-                  +-----------------------------------+
-                  |        React PWA Frontend         |
-                  |     (Vite Server - Port 5173)     |
-                  +-----------------------------------+
-                                    |
-                                    | REST API & SQLite Sync
-                                    v
-+-------------------+     +-------------------+     +--------------------+
-|   Ollama LLM      | <-> |  FastAPI Gateway  | <-> |   SQLite Store     |
-| (Port 11434)      |     |    (Port 8000)    |     |   (quantime.db)    |
-+-------------------+     +-------------------+     +--------------------+
+                       +---------------------------------------+
+                       |          React PWA Frontend           |
+                       |       (Vite Server - Port 5173)       |
+                       +---------------------------------------+
+                                           |
+                                           | REST & WebSockets (Sync)
+                                           v
+                       +---------------------------------------+
+                       |            FastAPI Gateway            |
+                       |              (Port 8000)              |
+                       +---------------------------------------+
+                           /               |               \
+                          /                |                \
+                         v                 v                 v
+               +-------------------+  +----------+  +------------------+
+               |    Ollama LLM     |  | SQLite   |  | Chroma Vector DB |
+               |   (Port 11434)    |  | Database |  | (Semantic RAG)   |
+               +-------------------+  +----------+  +------------------+
+                        |                   |
+                        v                   v
+               +-------------------+  +----------+
+               | Audio Processing  |  | Push     |
+               | (Kokoro & Silero) |  | Webpush  |
+               +-------------------+  +----------+
 ```
 
 *   **SQLite Storage**: Uses Write-Ahead Logging (WAL) and busy locks to allow fast concurrent transactions between the agent processor and client sockets.
