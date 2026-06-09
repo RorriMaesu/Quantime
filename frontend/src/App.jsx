@@ -2308,11 +2308,11 @@ export default function App() {
         <section className="flex-1">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 pb-2">
             <div className="flex items-center space-x-4">
-              <h2 className="text-lg font-semibold tracking-tight text-gray-100 flex items-center space-x-2">
-                <Calendar className="h-5 w-5 text-indigo-400" />
+              <h2 className="text-lg font-semibold tracking-tight text-gray-900 dark:text-gray-100 flex items-center space-x-2">
+                <Calendar className="h-5 w-5 text-indigo-500 dark:text-indigo-400" />
                 <span>Planner</span>
               </h2>
-              <div className="flex items-center space-x-2 bg-gray-900/60 border border-gray-800 rounded-lg p-1">
+              <div className="flex items-center space-x-2 bg-white/40 dark:bg-gray-900/40 border border-gray-150 dark:border-gray-800/80 rounded-lg p-1">
                 <button 
                   type="button"
                   onClick={() => {
@@ -2328,12 +2328,12 @@ export default function App() {
                       setSelectedDate(newDate);
                     }
                   }}
-                  className="p-1 rounded text-gray-400 hover:text-white transition-all hover:bg-gray-800 focus:outline-none"
+                  className="p-1 rounded text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white transition-all hover:bg-gray-100 dark:hover:bg-gray-800 focus:outline-none"
                   title="Previous Month"
                 >
-                  &lt;
+                  <ChevronLeft className="h-3.5 w-3.5" />
                 </button>
-                <span className="text-xs font-semibold px-2 text-gray-200 min-w-[90px] text-center">
+                <span className="text-xs font-semibold px-2 text-gray-800 dark:text-gray-200 min-w-[90px] text-center">
                   {visibleDate.toLocaleDateString([], { month: 'long', year: 'numeric' })}
                 </span>
                 <button 
@@ -2351,23 +2351,23 @@ export default function App() {
                       setSelectedDate(newDate);
                     }
                   }}
-                  className="p-1 rounded text-gray-400 hover:text-white transition-all hover:bg-gray-800 focus:outline-none"
+                  className="p-1 rounded text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white transition-all hover:bg-gray-100 dark:hover:bg-gray-800 focus:outline-none"
                   title="Next Month"
                 >
-                  &gt;
+                  <ChevronRight className="h-3.5 w-3.5" />
                 </button>
               </div>
             </div>
 
             <div className="flex items-center space-x-3">
-              <div className="flex bg-gray-900 border border-gray-850 p-1 rounded-lg">
+              <div className="flex bg-white/40 dark:bg-gray-900/40 border border-gray-150 dark:border-gray-800/80 p-1 rounded-lg">
                 <button 
                   type="button"
                   onClick={() => setViewMode("timeline")}
                   className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${
                     viewMode === 'timeline' 
-                      ? 'bg-indigo-650 text-white shadow-md' 
-                      : 'text-gray-400 hover:text-gray-200'
+                      ? 'bg-indigo-600 dark:bg-indigo-500 text-white shadow-sm' 
+                      : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
                   }`}
                 >
                   Timeline
@@ -2377,8 +2377,8 @@ export default function App() {
                   onClick={() => setViewMode("calendar")}
                   className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${
                     viewMode === 'calendar' 
-                      ? 'bg-indigo-650 text-white shadow-md' 
-                      : 'text-gray-400 hover:text-gray-200'
+                      ? 'bg-indigo-600 dark:bg-indigo-500 text-white shadow-sm' 
+                      : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
                   }`}
                 >
                   Calendar
@@ -2398,7 +2398,7 @@ export default function App() {
                   setRecurrencePattern("none");
                   setShowAddForm(true);
                 }}
-                className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-indigo-950 text-indigo-300 border border-indigo-900 hover:bg-indigo-900 transition-all flex items-center space-x-1 shadow-inner focus:outline-none"
+                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400 text-white shadow-md transition-all flex items-center space-x-1 focus:outline-none"
               >
                 <Plus className="h-3.5 w-3.5" />
                 <span>Add Task</span>
