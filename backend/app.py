@@ -201,7 +201,10 @@ async def security_middleware(request: Request, call_next):
     if path in ("/health", "/docs", "/openapi.json", "/auth/callback", "/auth/url") or path.startswith("/static"):
         return await call_next(request)
         
-    if not is_local:
+    # Static files and assets do not require API key validation. Only API and Auth routes do.
+    is_api_or_auth = path.startswith("/api/") or path.startswith("/auth/")
+    
+    if not is_local and is_api_or_auth:
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT value FROM user_profiles WHERE key = 'api_key'")
