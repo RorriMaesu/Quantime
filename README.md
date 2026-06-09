@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="frontend/public/logo512.png" alt="Quantime Logo" width="120" height="120" />
+</p>
+
 # Quantime
 
 Quantime is a local-first, privacy-respecting intelligent scheduling engine and task manager. By combining a local reasoning LLM (run via Ollama) with Google Workspace APIs (Calendar and Gmail), Quantime automatically syncs, schedules, and resolves timeline dependencies right on your desktop, and syncs seamlessly with your mobile device.
