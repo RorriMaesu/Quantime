@@ -2506,12 +2506,12 @@ export default function App() {
             <div className="mb-6 animate-slide">
               <div className="grid grid-cols-7 gap-1 text-center mb-1">
                 {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-                  <div key={day} className="text-[10px] font-bold text-gray-500 uppercase tracking-wider py-1">
+                  <div key={day} className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider py-1">
                     {day}
                   </div>
                 ))}
               </div>
-              <div className="grid grid-cols-7 gap-1.5 bg-gray-950/40 p-2 rounded-2xl border border-gray-900">
+              <div className="grid grid-cols-7 gap-1.5 bg-gray-55/30 dark:bg-gray-950/20 p-2 rounded-2xl border border-gray-100 dark:border-gray-900">
                 {getCalendarDays().map((cell, idx) => {
                   const isSelected = selectedDate.getDate() === cell.date.getDate() && 
                                      selectedDate.getMonth() === cell.date.getMonth() &&
@@ -2524,17 +2524,31 @@ export default function App() {
                     <div 
                       key={idx}
                       onClick={() => setSelectedDate(cell.date)}
-                      className={`min-h-[60px] p-1.5 rounded-xl border flex flex-col justify-between cursor-pointer transition-all hover:scale-[1.03] select-none ${
-                        !cell.isCurrentMonth ? 'bg-gray-950/20 border-transparent text-gray-805 opacity-40' :
-                        isSelected ? 'bg-indigo-950/50 border-indigo-500 text-indigo-200' :
-                        isToday ? 'bg-indigo-950/20 border-indigo-900/50 text-indigo-400' :
-                        'bg-gray-900/30 border-gray-850 text-gray-300'
+                      className={`min-h-[46px] md:min-h-[64px] p-1.5 rounded-xl border flex flex-col items-center justify-between cursor-pointer transition-all hover:scale-[1.03] select-none ${
+                        !cell.isCurrentMonth 
+                          ? 'bg-transparent border-transparent text-gray-400 dark:text-gray-600 opacity-25 cursor-default pointer-events-none' 
+                          : 'bg-white/40 dark:bg-gray-900/10 border-gray-100 dark:border-gray-850 hover:bg-white/85 dark:hover:bg-gray-900/30'
                       }`}
                     >
-                      <span className="text-[10px] font-bold">{cell.day}</span>
-                      <div className="flex flex-wrap gap-1 mt-1 justify-end">
-                        {cellTasks.map(t => {
-                          let dotClass = "bg-gray-500";
+                      <div className="flex items-center justify-center">
+                        {isSelected ? (
+                          <span className="h-6 w-6 rounded-full bg-indigo-600 dark:bg-indigo-500 text-white text-[10px] font-extrabold flex items-center justify-center shadow-md shadow-indigo-600/20">
+                            {cell.day}
+                          </span>
+                        ) : isToday ? (
+                          <span className="h-6 w-6 rounded-full border border-indigo-500 text-indigo-600 dark:text-indigo-400 text-[10px] font-extrabold flex items-center justify-center">
+                            {cell.day}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold text-gray-700 dark:text-gray-300">
+                            {cell.day}
+                          </span>
+                        )}
+                      </div>
+                      
+                      <div className="flex justify-center space-x-1.5 w-full mt-1">
+                        {cellTasks.slice(0, 3).map(t => {
+                          let dotClass = "bg-gray-400 dark:bg-gray-600";
                           if (t.energy_level === 'crimson') dotClass = "bg-red-500";
                           else if (t.energy_level === 'teal') dotClass = "bg-teal-500";
                           else if (t.constraint_type === 'hard') dotClass = "bg-indigo-500";
@@ -2542,11 +2556,16 @@ export default function App() {
                           return (
                             <span 
                               key={t.id} 
-                              className={`h-1.5 w-1.5 rounded-full ${dotClass}`} 
+                              className={`h-1 w-1 md:h-1.5 md:w-1.5 rounded-full ${dotClass}`} 
                               title={t.title}
                             />
                           );
                         })}
+                        {cellTasks.length > 3 && (
+                          <span className="text-[7px] md:text-[8px] font-extrabold text-gray-500 dark:text-gray-400 leading-none">
+                            +
+                          </span>
+                        )}
                       </div>
                     </div>
                   );
