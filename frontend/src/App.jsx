@@ -26,7 +26,9 @@ import {
   MicOff,
   Volume2,
   Disc,
-  Square
+  Square,
+  Sun,
+  Moon
 } from 'lucide-react';
 
 // Optional: Import Firebase SDK components if initialized client-side
@@ -70,6 +72,17 @@ try {
 }
 
 export default function App() {
+  const [theme, setTheme] = useState(() => localStorage.getItem("quantime_theme") || "dark");
+  
+  useEffect(() => {
+    if (theme === "dark") {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+    localStorage.setItem("quantime_theme", theme);
+  }, [theme]);
+
   const [userId, setUserId] = useState("user");
   const [userName, setUserName] = useState("User");
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
@@ -1964,7 +1977,14 @@ export default function App() {
             >
               <MessageSquare className="h-4 w-4" />
             </button>
-            
+            <button 
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              className="h-9 w-9 rounded-lg bg-gray-900 border border-gray-800 flex items-center justify-center text-indigo-400 hover:text-indigo-300 hover:border-gray-750 transition-all focus:outline-none"
+              title={theme === 'dark' ? "Switch to Light Mode" : "Switch to Dark Mode"}
+            >
+              {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </button>
+
             {/* Settings & Profile Popover */}
             <div className="relative">
               <button 

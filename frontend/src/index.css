@@ -2,47 +2,224 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Color Tokens & Theme Definitions */
+:root {
+  /* Light Mode - Warm Editorial Minimalist */
+  --bg-primary: #f8fafc;
+  --bg-surface: #ffffff;
+  --bg-elevated: #f1f5f9;
+  
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+  
+  --border-subtle: rgba(15, 23, 42, 0.05);
+  --accent-primary: #4f46e5;
+  --accent-glow: rgba(79, 70, 229, 0.08);
+  --shadow-card: 0 10px 30px -10px rgba(0, 0, 0, 0.03);
+
+  /* Map old Tailwind classes so they adapt */
+  --tw-gray-950: #f8fafc;
+  --tw-gray-900: #ffffff;
+  --tw-gray-850: #f1f5f9;
+  --tw-gray-800: #e2e8f0;
+  --tw-gray-750: #cbd5e1;
+  --tw-gray-700: #94a3b8;
+  --tw-gray-600: #64748b;
+  --tw-gray-500: #475569;
+  --tw-gray-400: #334155;
+  --tw-gray-300: #1e293b;
+  --tw-gray-200: #0f172a;
+  --tw-gray-100: #020617;
+  
+  --tw-indigo-950: #e0e7ff;
+  --tw-indigo-900: #c7d2fe;
+  --tw-indigo-800: #a5b4fc;
+  --tw-indigo-700: #818cf8;
+  --tw-indigo-650: #6366f1;
+  --tw-indigo-600: #4f46e5;
+  --tw-indigo-550: #4338ca;
+  --tw-indigo-500: #3730a3;
+  --tw-indigo-400: #312e81;
+  --tw-indigo-300: #1e1b4b;
+  --tw-indigo-200: #1e1b4b;
+  --tw-indigo-100: #ffffff;
+
+  --tw-purple-950: #fae8ff;
+  --tw-purple-900: #f5d0fe;
+  --tw-purple-800: #f0abfc;
+  --tw-purple-700: #e879f9;
+  --tw-purple-600: #d946ef;
+  --tw-purple-500: #c084fc;
+  --tw-purple-400: #a855f7;
+  --tw-purple-300: #7e22ce;
+  --tw-purple-200: #581c87;
+  --tw-purple-100: #3b0764;
+
+  --tw-emerald-950: #d1fae5;
+  --tw-emerald-900: #a7f3d0;
+  --tw-emerald-800: #6ee7b7;
+  --tw-emerald-700: #34d399;
+  --tw-emerald-600: #059669;
+  --tw-emerald-500: #10b981;
+  --tw-emerald-400: #047857;
+  --tw-emerald-300: #064e3b;
+  --tw-emerald-200: #022c22;
+  --tw-emerald-100: #ffffff;
+
+  --tw-red-950: #ffe4e6;
+  --tw-red-900: #fecdd3;
+  --tw-red-800: #fda4af;
+  --tw-red-700: #fb7185;
+  --tw-red-600: #f43f5e;
+  --tw-red-500: #e11d48;
+  --tw-red-400: #be123c;
+  --tw-red-300: #9f1239;
+  --tw-red-200: #881337;
+  --tw-red-100: #ffffff;
+}
+
+.dark {
+  /* Dark Mode - Obsidian & Deep Violet */
+  --bg-primary: #060709;
+  --bg-surface: #0b0c10;
+  --bg-elevated: #15181f;
+  
+  --text-primary: #f8fafc;
+  --text-secondary: #848fae;
+  --text-muted: #525a75;
+  
+  --border-subtle: rgba(255, 255, 255, 0.035);
+  --accent-primary: #7c69e6;
+  --accent-glow: rgba(124, 105, 230, 0.15);
+  --shadow-card: 0 12px 40px -4px rgba(0, 0, 0, 0.6);
+
+  /* Map old Tailwind classes so they adapt */
+  --tw-gray-950: #060709;
+  --tw-gray-900: #0b0c10;
+  --tw-gray-850: #101217;
+  --tw-gray-800: #15181f;
+  --tw-gray-750: #1c202a;
+  --tw-gray-700: #252936;
+  --tw-gray-600: #393f53;
+  --tw-gray-500: #525a75;
+  --tw-gray-400: #848fae;
+  --tw-gray-300: #b3bbd2;
+  --tw-gray-200: #d9deeb;
+  --tw-gray-100: #f0f2f7;
+  
+  --tw-indigo-950: #090812;
+  --tw-indigo-900: #100e24;
+  --tw-indigo-800: #1f1a45;
+  --tw-indigo-700: #32286b;
+  --tw-indigo-650: #433496;
+  --tw-indigo-600: #5542b8;
+  --tw-indigo-550: #6854d1;
+  --tw-indigo-500: #7c69e6;
+  --tw-indigo-400: #9b8af2;
+  --tw-indigo-300: #bbb0fa;
+  --tw-indigo-200: #dcd7fe;
+  --tw-indigo-100: #ededff;
+
+  --tw-purple-950: #0f0514;
+  --tw-purple-900: #1b0a26;
+  --tw-purple-800: #311245;
+  --tw-purple-700: #4d196e;
+  --tw-purple-600: #691f96;
+  --tw-purple-500: #872bbd;
+  --tw-purple-400: #a348db;
+  --tw-purple-300: #c16ef0;
+  --tw-purple-200: #de9efc;
+  --tw-purple-100: #f0cbfd;
+
+  --tw-emerald-950: #021812;
+  --tw-emerald-900: #04241b;
+  --tw-emerald-800: #073e30;
+  --tw-emerald-700: #0b5f4a;
+  --tw-emerald-600: #057a5f;
+  --tw-emerald-500: #10b981;
+  --tw-emerald-400: #34d399;
+  --tw-emerald-300: #6ee7b7;
+  --tw-emerald-200: #a7f3d0;
+  --tw-emerald-100: #d1fae5;
+
+  --tw-red-950: #1f0406;
+  --tw-red-900: #3c070c;
+  --tw-red-800: #6b0c16;
+  --tw-red-700: #991122;
+  --tw-red-600: #cc112a;
+  --tw-red-500: #f43f5e;
+  --tw-red-400: #fb7185;
+  --tw-red-300: #fca5a5;
+  --tw-red-200: #fecaca;
+  --tw-red-100: #fee2e2;
+}
+
 @layer base {
   body {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+  
+  .dark body {
     background: radial-gradient(circle at 50% 0%, #11101a 0%, #060709 100%);
     background-attachment: fixed;
   }
 }
 
-/* Refined Premium Glassmorphism card utilities */
+/* Unified elevation layout components */
 .glass-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.dark .glass-panel {
   background: rgba(11, 12, 16, 0.6);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.035);
   box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.04), 0 12px 40px -4px rgba(0, 0, 0, 0.6);
 }
 
 .glass-card-crimson {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-card);
+}
+
+.dark .glass-card-crimson {
   background: rgba(244, 63, 94, 0.02);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(244, 63, 94, 0.12);
   box-shadow: inset 0 1px 0px 0 rgba(255, 255, 255, 0.02), 0 8px 32px 0 rgba(0, 0, 0, 0.5);
 }
 
 .glass-card-teal {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-card);
+}
+
+.dark .glass-card-teal {
   background: rgba(15, 118, 110, 0.02);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(15, 118, 110, 0.12);
   box-shadow: inset 0 1px 0px 0 rgba(255, 255, 255, 0.02), 0 8px 32px 0 rgba(0, 0, 0, 0.5);
 }
 
 .glass-card-default {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-card);
+}
+
+.dark .glass-card-default {
   background: rgba(255, 255, 255, 0.005);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.03);
   box-shadow: inset 0 1px 0px 0 rgba(255, 255, 255, 0.02), 0 8px 32px 0 rgba(0, 0, 0, 0.55);
 }
 
-/* Custom Scrollbar for Chat */
+/* Custom Scrollbars */
 ::-webkit-scrollbar {
   width: 5px;
 }
@@ -52,23 +229,28 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--text-muted);
+  opacity: 0.2;
   border-radius: 9999px;
 }
 
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+}
+
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--text-secondary);
 }
 
 /* Glowing animation */
 @keyframes glow-pulse-indigo {
   0%, 100% {
-    box-shadow: 0 0 12px rgba(124, 105, 230, 0.15), 0 0 24px rgba(124, 105, 230, 0.05);
-    border-color: rgba(124, 105, 230, 0.1);
+    box-shadow: 0 0 12px var(--accent-glow);
+    border-color: var(--border-subtle);
   }
   50% {
-    box-shadow: 0 0 24px rgba(124, 105, 230, 0.35), 0 0 48px rgba(124, 105, 230, 0.15);
-    border-color: rgba(124, 105, 230, 0.25);
+    box-shadow: 0 0 24px var(--accent-glow);
+    border-color: var(--accent-primary);
   }
 }
 
@@ -85,7 +267,7 @@
   animation: float 4s ease-in-out infinite;
 }
 
-/* Soft transition defaults for interactives */
+/* Spring-like transitions on interactive components */
 a, button, select, input, textarea {
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
