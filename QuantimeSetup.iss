@@ -27,6 +27,10 @@ Name: "{commondesktop}\Quantime"; Filename: "{app}\backend\.venv\Scripts\pythonw
 ; Launch Quantime post-install (after configuration wizard finishes)
 Filename: "{app}\backend\.venv\Scripts\pythonw.exe"; Parameters: """{app}\backend\tray_icon.py"""; Flags: postinstall nowait skipifsilent; Description: "Launch Quantime"
 
+[Registry]
+Root: HKCU; Subkey: "Software\Classes\gnosys-quantime"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\gnosys-quantime\shell\open\command"; ValueType: string; ValueData: """{app}\backend\.venv\Scripts\pythonw.exe"" ""{app}\backend\tray_icon.py"""; Flags: uninsdeletekey
+
 [Code]
 type
   TWinPoint = record
