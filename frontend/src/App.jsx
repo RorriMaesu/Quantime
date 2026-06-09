@@ -3673,9 +3673,11 @@ export default function App() {
                 {(() => {
                   if (!activeVoiceText) return <span className="text-gray-650 italic">Wait for response...</span>;
                   let cleanVoiceText = activeVoiceText;
-                  cleanVoiceText = cleanVoiceText.replace(/^<tool_(?:call\s+name="[^"]+")?>/, "");
-                  cleanVoiceText = cleanVoiceText.replace(/^<tool_/, "");
+                  // Remove any <tool_call ...>...</tool_call> structures and partial starting tags
+                  cleanVoiceText = cleanVoiceText.replace(/<tool_call\s+name="[^"]+">[\s\S]*?<\/tool_call>/g, "");
+                  cleanVoiceText = cleanVoiceText.replace(/<tool_call\s+name="[^"]+">[\s\S]*/g, ""); // strip unclosed trailing call
                   cleanVoiceText = cleanVoiceText.replace(/<schedule-proposal[^>]*>[\s\S]*?<\/schedule-proposal>/g, "");
+                  cleanVoiceText = cleanVoiceText.replace(/<schedule-proposal[^>]*>[\s\S]*/g, ""); // strip unclosed trailing proposal
                   cleanVoiceText = cleanVoiceText.trim();
                   return cleanVoiceText ? renderMessageContent(cleanVoiceText) : <span className="text-gray-650 italic">Wait for response...</span>;
                 })()}
