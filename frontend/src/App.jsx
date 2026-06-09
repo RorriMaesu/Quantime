@@ -73,35 +73,7 @@ try {
 }
 
 const LogoIcon = ({ className = "h-6 w-6" }) => (
-  <svg viewBox="0 0 512 512" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <linearGradient id="logo-glow" x1="0%" y1="100%" x2="100%" y2="0%">
-        <stop offset="0%" stop-color="#00f2fe" />
-        <stop offset="50%" stop-color="#4facfe" />
-        <stop offset="100%" stop-color="#a855f7" />
-      </linearGradient>
-      <radialGradient id="logo-particle-grad" cx="50%" cy="50%" r="50%">
-        <stop offset="0%" stop-color="#ffffff" />
-        <stop offset="30%" stop-color="#00f2fe" />
-        <stop offset="100%" stop-color="#4facfe" />
-      </radialGradient>
-      <filter id="logo-neon-glow" x="-30%" y="-30%" width="160%" height="160%">
-        <feGaussianBlur stdDeviation="16" result="blur" />
-        <feComponentTransfer in="blur" result="glow1">
-          <feFuncA type="linear" slope="0.6" />
-        </feComponentTransfer>
-        <feMerge>
-          <feMergeNode in="glow1" />
-          <feMergeNode in="SourceGraphic" />
-        </feMerge>
-      </filter>
-    </defs>
-    <g filter="url(#logo-neon-glow)">
-      <path d="M 256 86 A 170 170 0 1 0 256 426 A 170 170 0 1 0 256 86 Z M 196 160 C 226 210 236 240 236 256 C 236 272 226 302 196 352 H 316 C 286 302 276 272 276 256 C 276 240 286 210 316 160 Z" fill="url(#logo-glow)" fill-rule="evenodd" />
-      <path d="M 180 370 C 240 440 360 450 410 360" fill="none" stroke="url(#logo-glow)" stroke-width="22" stroke-linecap="round" />
-      <circle cx="410" cy="360" r="22" fill="url(#logo-particle-grad)" />
-    </g>
-  </svg>
+  <img src="/logo192.png" alt="Quantime Logo" className={`${className} object-cover rounded-xl`} />
 );
 
 export default function App() {
@@ -2000,7 +1972,7 @@ export default function App() {
               </h1>
               <div className="flex items-center space-x-2">
                 <p className="text-xs text-indigo-400 font-medium">Local-First Scheduling Engine</p>
-                <span className="text-[10px] text-gray-500 font-mono bg-gray-900/60 px-1.5 py-0.5 rounded border border-gray-800">v1.5.3</span>
+                <span className="text-[10px] text-gray-500 font-mono bg-gray-900/60 px-1.5 py-0.5 rounded border border-gray-800">v1.5.4</span>
                 {showStatusBadge && (
                   <div 
                     className={`flex items-center space-x-1 px-1.5 py-0.5 rounded text-[9px] font-medium border transition-all duration-500 ${
