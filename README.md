@@ -33,6 +33,25 @@ Quantime is designed to be zero-config and beginner-friendly. You do **not** nee
     *   Create desktop and start menu shortcuts with our Möbius Q branding.
 3.  **Launch**: Click the desktop icon. Your default browser will open the Quantime PWA Dashboard (`http://localhost:5173`).
 
+### Visual Download & Installation Steps
+
+If your browser blocks the download or shows a warning due to a missing publisher signature, follow these steps to keep and run the file:
+
+#### Step 1: Click the download icon in your browser history or toolbar.
+![Step 1 - Download History](frontend/public/InstallInstructionImages/Step1QuantimeClickTheDownloadIconInstruction.jpg)
+
+#### Step 2: Hover over the downloaded file and click the three dots menu button (...).
+![Step 2 - Three Dots Options](frontend/public/InstallInstructionImages/Step2QuantimeClickThe3DotsInstruction.jpg)
+
+#### Step 3: Choose "Keep" or "Keep anyway" to verify you trust the software.
+![Step 3 - Keep Anyway](frontend/public/InstallInstructionImages/Step3QuantimeClickKeepAnywaynstruction.jpg)
+
+#### Step 4: Click "Open file" once the download finishes.
+![Step 4 - Open File](frontend/public/InstallInstructionImages/Step4QuantimeClickOpenFileInstruction.jpg)
+
+#### Step 5: Click "Run" or "Install" inside the installation wizard.
+![Step 5 - Execute Installer](frontend/public/InstallInstructionImages/FinalStep5QuantimeClickInstallInstruction.jpg)
+
 ---
 
 ## Connecting Google Workspace
