@@ -2924,15 +2924,44 @@ export default function App() {
                       <span>Gemma 4 Thinking Logs</span>
                       {isThinkingOpen[chat.id] ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                     </button>
-                    
                     {isThinkingOpen[chat.id] && (
-                      <div className="mt-1.5 p-3 rounded-lg bg-black/50 border border-gray-800 text-[11px] font-mono text-indigo-300/90 leading-normal max-h-40 overflow-y-auto glow-indigo animate-slide">
-                        {chat.thoughts.split('\n').map((line, idx) => (
-                          <div key={idx} className="flex items-start space-x-1.5">
-                            <span className="text-gray-600 select-none">&gt;</span>
-                            <span>{line}</span>
+                      <div className="mt-2 rounded-xl bg-[#090b10] border border-gray-800/80 shadow-2xl overflow-hidden animate-slide">
+                        {/* macOS Header decoration */}
+                        <div className="flex items-center justify-between px-3 py-2 bg-gray-950/80 border-b border-gray-850/50">
+                          <div className="flex items-center space-x-1.5">
+                            <span className="h-2.5 w-2.5 rounded-full bg-red-500/85 block"></span>
+                            <span className="h-2.5 w-2.5 rounded-full bg-yellow-500/85 block"></span>
+                            <span className="h-2.5 w-2.5 rounded-full bg-green-500/85 block"></span>
                           </div>
-                        ))}
+                          <span className="text-[9px] font-mono text-gray-500 font-medium tracking-wide">quantime-agent-orchestrator ~ zsh</span>
+                          <div className="w-12"></div> {/* Spacer balance */}
+                        </div>
+
+                        {/* Logs body */}
+                        <div className="p-3.5 text-[11px] font-mono leading-relaxed max-h-48 overflow-y-auto text-gray-300">
+                          {chat.thoughts.split('\n').map((line, idx) => {
+                            if (!line.trim()) return null;
+                            
+                            // Determine style based on log line content
+                            let lineClass = "text-gray-300";
+                            if (line.includes("[Agent Triggered Tool:")) {
+                              lineClass = "text-purple-400 font-semibold";
+                            } else if (line.includes("[Tool Execution Success]")) {
+                              lineClass = "text-emerald-400 font-semibold";
+                            } else if (line.includes("[Tool Execution Error:") || line.includes("[Critique Warning:")) {
+                              lineClass = "text-red-400 font-semibold";
+                            } else if (line.includes("[Ollama") || line.includes("Syncing")) {
+                              lineClass = "text-yellow-400/90";
+                            }
+                            
+                            return (
+                              <div key={idx} className={`flex items-start space-x-2 py-0.5 ${lineClass}`}>
+                                <span className="text-gray-600 select-none">&gt;</span>
+                                <span className="break-all">{line}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
                   </div>
