@@ -1,7 +1,7 @@
 // frontend/public/service-worker.js
 // Quantime PWA Service Worker with FCM and Direct Firestore Updates
 
-const CACHE_NAME = 'quantime-cache-v1.4.0';
+const CACHE_NAME = 'quantime-cache-v1.4.1';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -109,9 +109,9 @@ self.addEventListener('push', event => {
     icon: '/logo192.png',
     badge: '/logo192.png',
     sound: '/chime.wav',
-    tag: category === 'clarification' ? 'agent-clarification' : 'active-task',
+    tag: data.taskId ? `${category}-${data.taskId}` : category,
     pinned: true, // Keep notification pinned on lock-screen
-    requireInteraction: !isSilent || category === 'clarification',
+    requireInteraction: true, // Persist on screen until clicked or swiped away
     silent: isSilent,
     vibrate: isSilent ? [] : [200, 100, 200],
     data: { taskId: data.taskId, category: category },
