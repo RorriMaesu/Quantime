@@ -1,7 +1,7 @@
 // frontend/public/service-worker.js
 // Quantime PWA Service Worker with FCM and Direct Firestore Updates
 
-const CACHE_NAME = 'quantime-cache-v1.2.0';
+const CACHE_NAME = 'quantime-cache-v1.4.0';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -71,9 +71,9 @@ self.addEventListener('fetch', event => {
   );
 });
 
-// Listen to Push Notifications (FCM / Cloud Sync)
+// Listen to Push Notifications (FCM / Cloud Sync / Agent Alerts)
 self.addEventListener('push', event => {
-  let data = { title: 'Quantime Active Task', body: 'No current active task.', taskId: null, silent: false };
+  let data = { title: 'Quantime Active Task', body: 'No current active task.', taskId: null, silent: false, category: 'start' };
   if (event.data) {
     try {
       data = event.data.json();
@@ -83,22 +83,39 @@ self.addEventListener('push', event => {
   }
 
   const isSilent = data.silent === true || data.silent === 'true';
+  const category = data.category || 'start';
+
+  // Customize options based on notification category
+  let actions = [];
+  if (category === 'clarification') {
+    actions = [
+      { action: 'OPEN_CHAT', title: 'Reply to AI 💬' },
+      { action: 'DISMISS', title: 'Dismiss' }
+    ];
+  } else if (category === 'important_email') {
+    actions = [
+      { action: 'OPEN_INBOX', title: 'View Inbox ✉️' },
+      { action: 'DISMISS', title: 'Dismiss' }
+    ];
+  } else if (!isSilent) {
+    actions = [
+      { action: 'COMPLETE', title: 'Complete Task' },
+      { action: 'SNOOZE_15', title: 'Snooze 10 Min' }
+    ];
+  }
 
   const options = {
     body: data.body,
     icon: '/logo192.png',
     badge: '/logo192.png',
     sound: '/chime.wav',
-    tag: 'active-task',
+    tag: category === 'clarification' ? 'agent-clarification' : 'active-task',
     pinned: true, // Keep notification pinned on lock-screen
-    requireInteraction: !isSilent,
+    requireInteraction: !isSilent || category === 'clarification',
     silent: isSilent,
     vibrate: isSilent ? [] : [200, 100, 200],
-    data: { taskId: data.taskId },
-    actions: isSilent ? [] : [
-      { action: 'COMPLETE', title: 'Complete Task' },
-      { action: 'SNOOZE_15', title: 'Snooze 10 Min' }
-    ]
+    data: { taskId: data.taskId, category: category },
+    actions: actions
   };
 
   // Broadcast sound playback command to active client tabs
@@ -124,8 +141,56 @@ self.addEventListener('notificationclick', event => {
   const notification = event.notification;
   const action = event.action;
   const taskId = notification.data ? notification.data.taskId : null;
+  const category = notification.data ? notification.data.category : 'start';
 
   notification.close();
+
+  // If dismiss or close button is clicked, do nothing
+  if (action === 'DISMISS') {
+    return;
+  }
+
+  // Handle agent-specific routing
+  if (action === 'OPEN_CHAT' || category === 'clarification') {
+    event.waitUntil(
+      self.clients.matchAll({ type: 'window' }).then(clientList => {
+        // Try focusing existing window and redirecting to the agent chat screen
+        for (let i = 0; i < clientList.length; i++) {
+          const client = clientList[i];
+          if ('focus' in client) {
+            client.focus();
+            if (client.navigate) {
+              return client.navigate('/');
+            }
+          }
+        }
+        if (self.clients.openWindow) {
+          return self.clients.openWindow('/');
+        }
+      })
+    );
+    return;
+  }
+
+  if (action === 'OPEN_INBOX' || category === 'important_email') {
+    event.waitUntil(
+      self.clients.matchAll({ type: 'window' }).then(clientList => {
+        for (let i = 0; i < clientList.length; i++) {
+          const client = clientList[i];
+          if ('focus' in client) {
+            client.focus();
+            if (client.navigate) {
+              return client.navigate('/'); // Can be structured to open inbox tab or path
+            }
+          }
+        }
+        if (self.clients.openWindow) {
+          return self.clients.openWindow('/');
+        }
+      })
+    );
+    return;
+  }
 
   if (!taskId) {
     console.warn("Notification click skipped: Missing Task ID.");

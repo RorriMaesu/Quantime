@@ -724,6 +724,55 @@ def update_task_metadata(task_id: str, title: Optional[str] = None, description:
     finally:
         conn.close()
 
+def audit_schedule_conflicts() -> Dict[str, Any]:
+    """
+    Performs an autonomous scan of the upcoming schedule (next 7 days) to identify conflicts.
+    """
+    logger.info("Ollama Agent executing: audit_schedule_conflicts()")
+    import datetime
+    now = datetime.datetime.now().astimezone()
+    next_week = now + datetime.timedelta(days=7)
+    
+    # Query all schedule blocks for the next week
+    tasks = get_current_schedule(now.isoformat(), next_week.isoformat())
+    conflicts_found = []
+    
+    for i, t1 in enumerate(tasks):
+        try:
+            t1_start = datetime.datetime.fromisoformat(t1["start_time"].replace('Z', '+00:00'))
+            t1_end = datetime.datetime.fromisoformat(t1["end_time"].replace('Z', '+00:00'))
+        except Exception:
+            continue
+            
+        for j, t2 in enumerate(tasks):
+            if i >= j:
+                continue
+            try:
+                t2_start = datetime.datetime.fromisoformat(t2["start_time"].replace('Z', '+00:00'))
+                t2_end = datetime.datetime.fromisoformat(t2["end_time"].replace('Z', '+00:00'))
+            except Exception:
+                continue
+                
+            # Intersect check
+            if max(t1_start, t2_start) < min(t1_end, t2_end):
+                conflicts_found.append({
+                    "task_1": {"id": t1["id"], "title": t1["title"], "start_time": t1["start_time"], "end_time": t1["end_time"]},
+                    "task_2": {"id": t2["id"], "title": t2["title"], "start_time": t2["start_time"], "end_time": t2["end_time"]}
+                })
+                
+    if conflicts_found:
+        return {
+            "status": "conflicts_detected",
+            "conflicts": conflicts_found,
+            "message": f"Audit complete: identified {len(conflicts_found)} conflict overlap(s) in your upcoming timeline.",
+            "hint": "Please reschedule conflicting tasks, or use calculate_schedule_proposals to construct dynamic workarounds."
+        }
+        
+    return {
+        "status": "success",
+        "message": "Audit complete: no schedule conflict overlaps identified in the upcoming 7 days."
+    }
+
 def fetch_unread_emails() -> Dict[str, Any]:
     """
     Fetches unread emails related to timeline updates.
@@ -758,6 +807,70 @@ def sync_google_calendar(days: int = 30) -> Dict[str, Any]:
         return {"status": "success", "synced_events_count": len(events), "events": events}
     except Exception as e:
         logger.error(f"Google Calendar sync failed in agent: {e}")
+        return {"status": "error", "message": str(e)}
+
+def send_agent_push_notification(title: str, body: str, category: str = "clarification", task_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Directly sends a desktop or PC push notification to the user.
+    Use this to notify the user if you have clarifying questions, need schedule updates,
+    or identify critical updates.
+    """
+    logger.info(f"Ollama Agent executing: send_agent_push_notification(title={title}, category={category})")
+    try:
+        from py_vapid import Vapid
+        from pywebpush import webpush
+        
+        # Load VAPID Keys
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM user_profiles WHERE key = 'vapid_private_key'")
+        row = cursor.fetchone()
+        if not row:
+            conn.close()
+            return {"status": "error", "message": "VAPID key not initialized in database."}
+            
+        priv_pem = row["value"].encode('utf-8')
+        vapid_key = Vapid.from_pem(priv_pem)
+        
+        # Fetch subscriptions
+        cursor.execute("SELECT id, subscription_json FROM push_subscriptions")
+        subscriptions = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+        
+        if not subscriptions:
+            return {"status": "success", "message": "No active web push subscriptions found."}
+            
+        payload = json.dumps({
+            "title": title,
+            "body": body,
+            "category": category,
+            "taskId": task_id or "agent-alert",
+            "alertType": "agent",
+            "silent": False,
+            "actions": [
+                {"action": "chat", "title": "Reply to AI 💬"},
+                {"action": "dismiss", "title": "Dismiss"}
+            ]
+        })
+        
+        success_count = 0
+        for sub in subscriptions:
+            try:
+                sub_info = json.loads(sub["subscription_json"])
+                webpush(
+                    subscription_info=sub_info,
+                    data=payload,
+                    vapid_private_key=vapid_key,
+                    vapid_claims={"sub": "mailto:admin@quantime.app"},
+                    ttl=86400
+                )
+                success_count += 1
+            except Exception as ex:
+                logger.warning(f"Agent failed to deliver push to subscription {sub['id']}: {ex}")
+                
+        return {"status": "success", "delivered_count": success_count}
+    except Exception as e:
+        logger.error(f"Failed to send agent push notification: {e}")
         return {"status": "error", "message": str(e)}
 
 def stage_schedule_proposal(transaction_id: str, option_id: str, description: str, proposed_changes: List[Dict[str, Any]], expires_in_minutes: float = 10.0) -> Dict[str, Any]:
@@ -1076,11 +1189,30 @@ TOOL_FUNCTIONS = {
     "stage_schedule_proposal": stage_schedule_proposal,
     "get_circadian_profile": get_circadian_profile,
     "get_day_of_week": get_day_of_week,
-    "calculate_schedule_proposals": calculate_schedule_proposals
+    "calculate_schedule_proposals": calculate_schedule_proposals,
+    "audit_schedule_conflicts": audit_schedule_conflicts,
+    "send_agent_push_notification": send_agent_push_notification
 }
 
 
 TOOL_SCHEMAS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "send_agent_push_notification",
+            "description": "Send a desktop/PC push notification to the user for clarifying questions, schedule checks, or to alert them about important updates.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "The title of the push notification banner"},
+                    "body": {"type": "string", "description": "The description or explanation text shown in the notification body"},
+                    "category": {"type": "string", "enum": ["clarification", "important_email", "alert"], "description": "The type of alert to classify routing. Defaults to 'clarification'."},
+                    "task_id": {"type": "string", "description": "Optional associated task ID to allow context opening"}
+                },
+                "required": ["title", "body"]
+            }
+        }
+    },
     {
         "type": "function",
         "function": {
@@ -1196,7 +1328,7 @@ TOOL_SCHEMAS = [
                     "recurrence_days": {
                         "type": "array",
                         "items": {"type": "integer"},
-                        "description": "Optional days of the week to repeat on for weekly pattern (0 = Monday, 1 = Tuesday, 2 = Wednesday, 3 = Thursday, 4 = Friday, 5 = Saturday, 6 = Sunday)."
+                        "description": "Required when scheduling weekly recurring tasks on specific weekdays (e.g. every Thursday = [3], every Tuesday and Thursday = [1, 3]). Days are: 0 = Monday, 1 = Tuesday, 2 = Wednesday, 3 = Thursday, 4 = Friday, 5 = Saturday, 6 = Sunday."
                     }
                 },
                 "required": ["title", "start_time", "end_time"]
@@ -1325,6 +1457,17 @@ TOOL_SCHEMAS = [
                 "required": ["title", "duration_minutes", "preferred_start"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "audit_schedule_conflicts",
+            "description": "Performs an autonomous scan of the upcoming schedule (next 7 days) to identify and return all overlapping conflicts.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
     }
 ]
 
@@ -1352,13 +1495,16 @@ Behavioral Guidelines & Rules:
 9. **No Scheduling in the Past**: You must NEVER create new tasks or modify existing tasks to start in the past relative to the current date-time context. Always verify the current time before choosing task time slots.
 10. **Calendar Date Math**: You must NEVER guess or calculate the day of the week for a specific calendar date yourself. If the user asks about a day of the week, a holiday, or asks you to perform calendar math (e.g. "what day is July 6th?", "what day is next Friday?", "what day is October 24th?"), you MUST call the `get_day_of_week` tool to compute the correct date and weekday.
 11. **Recurring Tasks & Complex Patterns**:
-   - For simple recurring events (e.g. 'Piano lesson every Friday at 4pm for 5 weeks'), call `create_task` with the appropriate `recurrence_pattern` and `recurrence_count`.
-   - For complex recurring requests containing exclusions or specific combinations (e.g. 'daily except Tuesdays', 'every weekday', 'every Monday, Wednesday, and Friday'), do NOT use the generic `recurrence_pattern`. Instead, resolve the target dates manually using the 14-day calendar reference map or by executing `get_day_of_week`, and make multiple `create_task` tool calls in parallel (one for each eligible day, setting `recurrence_pattern="none"`) to create them precisely.
+   - For simple recurring events (e.g. 'Piano lesson every Friday at 4pm for 5 weeks'), call `create_task` with the appropriate `recurrence_pattern="weekly"`, `recurrence_count=5`, and `recurrence_days=[4]`.
+   - When asked to schedule a task recurring on certain weekdays (e.g. 'every Thursday'), you MUST select `recurrence_pattern="weekly"` and explicitly populate the `recurrence_days` array (e.g. `[3]` for Thursday, `[1, 3]` for Tuesdays and Thursdays). Always ensure the `start_time` parameter points to the correct calendar date of the first occurrence in the series.
+   - For complex recurring requests containing exclusions or specific combinations (e.g. 'daily except Tuesdays'), do NOT use the generic `recurrence_pattern`. Instead, resolve the target dates manually using the 14-day calendar reference map or by executing `get_day_of_week`, and make multiple `create_task` tool calls in parallel (one for each eligible day, setting `recurrence_pattern="none"`) to create them precisely.
 12. **Circadian Brainstorming & Schedule Optimization**:
    - Proactively brainstorm efficiency improvements with the user.
    - When asked to optimize or review their day or schedule, compare their scheduled tasks against their circadian peaks and low-efficiency slumps (`get_circadian_profile`).
    - If a high-energy task (such as study or deep work) is placed in a low-efficiency slump, or a low-energy task (such as admin or reading) is placed in a peak hour, point it out and suggest reorganizing it.
    - Offer to run rescheduling for them or walk them through option proposals. Offer practical time management techniques (e.g. task bundling, Pomodoro blocks, or regular breaks).
+13. **Autonomous Schedule Audits**:
+    - When checking the schedule or optimizing the timeline, call `audit_schedule_conflicts` to find overlaps. If conflicts are found, resolve them by shifting tasks or proposing compaction options.
 """
 
 def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], audio_b64: Optional[str] = None, selected_date: Optional[str] = None, current_time: Optional[str] = None) -> Generator[Tuple[str, str], None, None]:
@@ -1591,6 +1737,22 @@ def generate_agent_stream(prompt: str, chat_history: List[Dict[str, str]] = [], 
                             # Execute the tool locally
                             result = TOOL_FUNCTIONS[func_name](**func_args)
                             yield ("thought", f"[Tool Execution Success]\n")
+                            
+                            # Self-Critique Loop: Check for conflicts or DAG issues introduced after scheduling mutations
+                            if func_name in ["create_task", "modify_task_time"]:
+                                start_t = func_args.get("start_time") or func_args.get("new_start")
+                                end_t = func_args.get("end_time") or func_args.get("new_end")
+                                task_id = result.get("task_id") if func_name == "create_task" else func_args.get("task_id")
+                                if start_t and end_t:
+                                    conflicts = check_overlaps(task_id, start_t, end_t)
+                                    if conflicts:
+                                        conflict_names = ", ".join([f"'{c['title']}'" for c in conflicts])
+                                        result = {
+                                            "status": "critique_error",
+                                            "message": f"Self-Critique detected conflict: scheduled task overlaps with {conflict_names}.",
+                                            "hint": "Please reschedule this task to an alternative free slot or propose compaction options to resolve."
+                                        }
+                                        yield ("thought", f"[Critique Warning: Overlap detected on scheduled task - Requesting retry]\n")
                         except Exception as err:
                             # Gemma 4 self-correction feedback loop: pass clear exception trace back to system context
                             result = {

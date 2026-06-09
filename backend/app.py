@@ -156,7 +156,7 @@ def get_localtunnel_url() -> Optional[str]:
     return None
 
 # Initialize FastAPI Application
-app = FastAPI(title="Quantime Gateway API", version="1.3.16")
+app = FastAPI(title="Quantime Gateway API", version="1.4.0")
 
 # Configure Cross-Origin Resource Sharing (CORS) for development UI access
 origins = [
@@ -1960,13 +1960,13 @@ def get_active_focus_task_id(now_dt) -> Optional[str]:
         conn.close()
     return None
 
-def mark_notification_sent(task_id: str, start_time: str, alert_type: str):
+def mark_notification_sent(subscription_hash: str, task_id: str, start_time: str, alert_type: str):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "INSERT OR REPLACE INTO sent_notifications (task_id, start_time, alert_type, fired_at) VALUES (?, ?, ?, ?)",
-            (task_id, start_time, alert_type, time.time())
+            "INSERT OR REPLACE INTO sent_notifications (subscription_hash, task_id, start_time, alert_type, fired_at) VALUES (?, ?, ?, ?, ?)",
+            (subscription_hash, task_id, start_time, alert_type, time.time())
         )
         conn.commit()
     except Exception as e:
@@ -2096,8 +2096,8 @@ async def check_and_send_notifications():
         cursor.execute("SELECT id, title, start_time, end_time, energy_level, status FROM tasks WHERE status = 'pending'")
         tasks = [dict(r) for r in cursor.fetchall()]
         
-        cursor.execute("SELECT task_id, start_time, alert_type FROM sent_notifications")
-        sent_set = {(r["task_id"], r["start_time"], r["alert_type"]) for r in cursor.fetchall()}
+        cursor.execute("SELECT subscription_hash, task_id, start_time, alert_type FROM sent_notifications")
+        sent_set = {(r["subscription_hash"], r["task_id"], r["start_time"], r["alert_type"]) for r in cursor.fetchall()}
         conn.close()
         
         from py_vapid import Vapid
@@ -2106,8 +2106,8 @@ async def check_and_send_notifications():
         
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT subscription_json FROM push_subscriptions")
-        subscriptions = [json.loads(r["subscription_json"]) for r in cursor.fetchall()]
+        cursor.execute("SELECT id, subscription_json FROM push_subscriptions")
+        subscriptions = [dict(r) for r in cursor.fetchall()]
         conn.close()
         
         if not subscriptions:
@@ -2116,51 +2116,206 @@ async def check_and_send_notifications():
         for T in tasks:
             try:
                 start_dt = datetime.fromisoformat(T["start_time"].replace('Z', '+00:00'))
+                end_dt = datetime.fromisoformat(T["end_time"].replace('Z', '+00:00'))
             except Exception:
                 continue
                 
             diff_seconds = (start_dt - now_dt).total_seconds()
-            alert_to_send = None
             
-            if 0 < diff_seconds <= (lead_mins * 60):
-                if (T["id"], T["start_time"], "lead") not in sent_set:
-                    alert_to_send = "lead"
-            elif -300 <= diff_seconds <= 10:
-                if on_start and (T["id"], T["start_time"], "start") not in sent_set:
-                    alert_to_send = "start"
-                    
-            if alert_to_send:
-                is_silent = False
-                if dnd_focus and active_focus_id:
-                    if T["id"] != active_focus_id and T["energy_level"] != "crimson":
-                        is_silent = True
+            for sub in subscriptions:
+                sub_id = sub["id"]
+                sub_info = json.loads(sub["subscription_json"])
+                
+                alert_to_send = None
+                title = ""
+                body = ""
+                
+                if 0 < diff_seconds <= (lead_mins * 60):
+                    if (sub_id, T["id"], T["start_time"], "lead") not in sent_set:
+                        alert_to_send = "lead"
+                        title = f"Upcoming: {T['title']}"
+                        body = f"Starts in {lead_mins} minutes."
+                elif -300 <= diff_seconds <= 10:
+                    if on_start and (sub_id, T["id"], T["start_time"], "start") not in sent_set:
+                        alert_to_send = "start"
+                        title = f"Starting now: {T['title']}"
+                        body = "It's time to begin!"
+                elif now_dt > end_dt:
+                    # Task has passed its scheduled end_time but is still pending. Send missed alert.
+                    # Scan for tasks that ended within today (limit of 1 day) to avoid spamming very old items
+                    if (now_dt - end_dt).total_seconds() < 86400:
+                        if (sub_id, T["id"], T["start_time"], "missed") not in sent_set:
+                            alert_to_send = "missed"
+                            title = f"Missed Task: {T['title']}"
+                            body = "This task's scheduled block has passed. Did you finish it? Update status."
                         
-                title = f"Upcoming: {T['title']}" if alert_to_send == "lead" else f"Starting now: {T['title']}"
-                body = f"Starts in {lead_mins} minutes." if alert_to_send == "lead" else "It's time to begin!"
-                
-                payload = json.dumps({
-                    "title": title,
-                    "body": body,
-                    "taskId": T["id"],
-                    "alertType": alert_to_send,
-                    "silent": is_silent
-                })
-                
-                for sub_info in subscriptions:
+                if alert_to_send:
+                    is_silent = False
+                    if dnd_focus and active_focus_id:
+                        if T["id"] != active_focus_id and T["energy_level"] != "crimson":
+                            is_silent = True
+                            
+                    # Include web push action parameters in payload for desktop/mobile notification click actions
+                    actions_payload = []
+                    if alert_to_send in ["start", "missed"]:
+                        actions_payload = [
+                            {"action": "complete", "title": "Done ✔️"},
+                            {"action": "snooze", "title": "Snooze 10m ⏳"}
+                        ]
+                    
+                    payload = json.dumps({
+                        "title": title,
+                        "body": body,
+                        "taskId": T["id"],
+                        "alertType": alert_to_send,
+                        "silent": is_silent,
+                        "actions": actions_payload
+                    })
+                    
                     try:
-                        webpush(
+                        # Non-blocking async dispatch of webpush notification
+                        await asyncio.to_thread(
+                            webpush,
                             subscription_info=sub_info,
                             data=payload,
                             vapid_private_key=vapid_key,
                             vapid_claims={"sub": "mailto:admin@quantime.app"},
                             ttl=86400
                         )
+                        mark_notification_sent(sub_id, T["id"], T["start_time"], alert_to_send)
                     except Exception as e:
-                        logger.warning(f"Failed to deliver webpush to subscription: {e}")
-                        
-                mark_notification_sent(T["id"], T["start_time"], alert_to_send)
+                        logger.warning(f"Failed to deliver webpush to subscription {sub_id}: {e}")
     except Exception as e:
         logger.error("Error checking and sending notifications:", exc_info=True)
+
+async def check_and_process_unread_emails():
+    """
+    Checks unread emails, uses the LLM to classify if they are important,
+    and sends a push notification if flagged YES.
+    """
+    try:
+        emails = GmailParser.get_unread_updates()
+        if not emails:
+            return
+            
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Load VAPID details
+        cursor.execute("SELECT value FROM user_profiles WHERE key = 'vapid_private_key'")
+        row = cursor.fetchone()
+        if not row:
+            conn.close()
+            return
+        priv_pem = row["value"].encode('utf-8')
+        
+        # Fetch active push subscriptions
+        cursor.execute("SELECT id, subscription_json FROM push_subscriptions")
+        subscriptions = [dict(r) for r in cursor.fetchall()]
+        if not subscriptions:
+            conn.close()
+            return
+            
+        # Get already processed email list
+        cursor.execute("SELECT email_id FROM processed_emails")
+        processed_set = {r["email_id"] for r in cursor.fetchall()}
+        conn.close()
+        
+        from py_vapid import Vapid
+        vapid_key = Vapid.from_pem(priv_pem)
+        
+        # Check LLM model selection
+        from backend.ollama_agent import get_selected_model, OLLAMA_CHAT_URL
+        model_name = get_selected_model()
+        
+        for email in emails:
+            email_id = email["id"]
+            if email_id in processed_set:
+                continue
+                
+            subject = email.get("subject", "No Subject")
+            sender = email.get("sender", "Unknown Sender")
+            body_snippet = email.get("body", "")[:300]
+            
+            logger.info(f"Classifying incoming email ID: {email_id} using model '{model_name}'...")
+            
+            # Formulate verification prompt
+            classification_prompt = (
+                f"Identify if this email is high-importance for the user's schedule or requires immediate attention.\n"
+                f"Examples of high-importance: flight cancellation, rescheduled meeting, exam alert, task deadline warning, class drop.\n"
+                f"Examples of low-importance: newsletter, promo, social notifications, system welcome, receipts.\n\n"
+                f"Email Subject: {subject}\n"
+                f"Email Sender: {sender}\n"
+                f"Email Body: {body_snippet}\n\n"
+                f"Respond with exactly one word: 'YES' if it is high-importance, or 'NO' if it is not. Do not say anything else."
+            )
+            
+            is_important = False
+            try:
+                # Query Ollama synchronously or with short timeout
+                payload = {
+                    "model": model_name,
+                    "messages": [{"role": "user", "content": classification_prompt}],
+                    "stream": False
+                }
+                req = urllib.request.Request(
+                    OLLAMA_CHAT_URL,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    resp_data = json.loads(resp.read().decode("utf-8"))
+                    answer = resp_data.get("message", {}).get("content", "").strip().upper()
+                    logger.info(f"LLM Classification answer: '{answer}'")
+                    is_important = "YES" in answer
+            except Exception as classify_err:
+                logger.error(f"Failed to classify email via LLM: {classify_err}")
+                # Fallback: simple text scanner heuristics if LLM offline
+                heuristics = ["urgent", "deadline", "rescheduled", "cancel", "exam", "quiz", "drop", "important"]
+                is_important = any(h in subject.lower() or h in body_snippet.lower() for h in heuristics)
+                
+            # Log as processed
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT OR REPLACE INTO processed_emails (email_id, processed_at, is_important) VALUES (?, ?, ?)",
+                (email_id, time.time(), 1 if is_important else 0)
+            )
+            conn.commit()
+            conn.close()
+            
+            if is_important:
+                logger.info(f"Email ID {email_id} flagged as IMPORTANT! Dispatching agent push notification.")
+                notification_payload = json.dumps({
+                    "title": f"✉️ Important: {subject}",
+                    "body": f"From {sender}: {body_snippet[:60]}...",
+                    "category": "important_email",
+                    "taskId": "email-" + email_id,
+                    "alertType": "agent",
+                    "silent": False,
+                    "actions": [
+                        {"action": "chat", "title": "Check with AI 💬"},
+                        {"action": "dismiss", "title": "Dismiss"}
+                    ]
+                })
+                
+                for sub in subscriptions:
+                    try:
+                        sub_info = json.loads(sub["subscription_json"])
+                        await asyncio.to_thread(
+                            webpush,
+                            subscription_info=sub_info,
+                            data=notification_payload,
+                            vapid_private_key=vapid_key,
+                            vapid_claims={"sub": "mailto:admin@quantime.app"},
+                            ttl=86400
+                        )
+                    except Exception as deliver_err:
+                        logger.warning(f"Failed to deliver email alert to subscription {sub['id']}: {deliver_err}")
+                        
+    except Exception as e:
+        logger.error(f"Error in check_and_process_unread_emails: {e}", exc_info=True)
 
 def notification_poller_thread():
     loop = asyncio.new_event_loop()
@@ -2168,11 +2323,21 @@ def notification_poller_thread():
     
     async def poller_loop():
         logger.info("Notification background poller loop started.")
+        email_counter = 0
         while True:
             try:
                 await check_and_send_notifications()
             except Exception as e:
                 logger.error(f"Error in check_and_send_notifications: {e}")
+                
+            # Query and classify emails every 5 cycles (~5 minutes) or initially
+            if email_counter % 5 == 0:
+                try:
+                    await check_and_process_unread_emails()
+                except Exception as e:
+                    logger.error(f"Error in check_and_process_unread_emails: {e}")
+            
+            email_counter += 1
             await asyncio.sleep(60)
             
     loop.run_until_complete(poller_loop())

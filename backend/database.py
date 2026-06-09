@@ -187,14 +187,24 @@ def init_db(db_path: str = DB_FILE) -> None:
     )
     """)
 
-    # 10. Sent Notifications Audit Log Table
+    # 10. Sent Notifications Audit Log Table (Tracking per-device subscription deliveries)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS sent_notifications (
+        subscription_hash TEXT NOT NULL DEFAULT 'global',
         task_id TEXT NOT NULL,
         start_time TEXT NOT NULL,
         alert_type TEXT NOT NULL,
         fired_at REAL NOT NULL,
-        PRIMARY KEY (task_id, start_time, alert_type)
+        PRIMARY KEY (subscription_hash, task_id, start_time, alert_type)
+    )
+    """)
+
+    # 10b. Processed Emails Audit Log Table (To track email notifications processed by AI)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS processed_emails (
+        email_id TEXT PRIMARY KEY,
+        processed_at REAL NOT NULL,
+        is_important INTEGER NOT NULL
     )
     """)
     
