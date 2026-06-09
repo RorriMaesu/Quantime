@@ -4,7 +4,7 @@
 [Setup]
 AppId={{D37E618A-706E-45E4-A159-4E6DF9B53A04}}
 AppName=Quantime
-AppVersion=1.4.2
+AppVersion=1.5.0
 AppPublisher=RorriMaesu
 DefaultDirName={userpf}\Quantime
 DefaultGroupName=Quantime

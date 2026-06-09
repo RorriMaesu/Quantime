@@ -28,7 +28,8 @@ import {
   Disc,
   Square,
   Sun,
-  Moon
+  Moon,
+  Coffee
 } from 'lucide-react';
 
 // Optional: Import Firebase SDK components if initialized client-side
@@ -615,6 +616,40 @@ export default function App() {
       return new Date(year, month - 1, day);
     }
     return new Date(dateStr);
+  };
+
+  const getLoadingMessage = (chat, precedingUserMsg) => {
+    if (chat && chat.thoughts) {
+      const lines = chat.thoughts.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+      if (lines.length > 0) {
+        const lastLine = lines[lines.length - 1];
+        const cleanThought = lastLine.replace(/^>\s*/, "").replace(/^\[.*?\]\s*/, "").trim();
+        if (cleanThought.length > 3) {
+          if (cleanThought.toLowerCase().includes("connecting to local")) {
+            return "Synthesizing AI scheduling agent...";
+          }
+          return cleanThought.length > 50 ? `${cleanThought.substring(0, 47)}...` : cleanThought;
+        }
+      }
+    }
+
+    if (precedingUserMsg && precedingUserMsg.text) {
+      const query = precedingUserMsg.text.toLowerCase();
+      if (query.includes("reschedule") || query.includes("move") || query.includes("shift") || query.includes("delay")) {
+        return "Optimizing timetable and resolving conflict chains...";
+      }
+      if (query.includes("email") || query.includes("gmail") || query.includes("inbox") || query.includes("sync")) {
+        return "Retrieving and parsing secure email threads...";
+      }
+      if (query.includes("dependency") || query.includes("dependencies") || query.includes("after") || query.includes("before")) {
+        return "Mapping task nodes and relational constraints...";
+      }
+      if (query.includes("routine") || query.includes("habit") || query.includes("repeat")) {
+        return "Re-evaluating routine slot allocations...";
+      }
+    }
+
+    return "Analyzing request details...";
   };
 
   const isSameDay = (d1, d2) => {
@@ -1937,7 +1972,7 @@ export default function App() {
               </h1>
               <div className="flex items-center space-x-2">
                 <p className="text-xs text-indigo-400 font-medium">Local-First Scheduling Engine</p>
-                <span className="text-[10px] text-gray-500 font-mono bg-gray-900/60 px-1.5 py-0.5 rounded border border-gray-800">v1.4.2</span>
+                <span className="text-[10px] text-gray-500 font-mono bg-gray-900/60 px-1.5 py-0.5 rounded border border-gray-800">v1.5.0</span>
                 {showStatusBadge && (
                   <div 
                     className={`flex items-center space-x-1 px-1.5 py-0.5 rounded text-[9px] font-medium border transition-all duration-500 ${
@@ -1977,6 +2012,17 @@ export default function App() {
             >
               <MessageSquare className="h-4 w-4" />
             </button>
+            <a 
+              href="https://buymeacoffee.com/rorrimaesu"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="h-9 px-3 rounded-lg bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 hover:border-amber-500/35 text-amber-600 dark:text-amber-400 transition-all flex items-center justify-center space-x-1.5 text-xs font-semibold select-none shadow-sm cursor-pointer"
+              title="Support development: Buy me a coffee!"
+            >
+              <Coffee className="h-4 w-4 fill-amber-500/10" />
+              <span className="hidden sm:inline">Buy me a coffee</span>
+            </a>
+
             <button 
               onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
               className="h-9 w-9 rounded-lg bg-gray-900 border border-gray-800 flex items-center justify-center text-indigo-400 hover:text-indigo-300 hover:border-gray-750 transition-all focus:outline-none"
@@ -2255,6 +2301,23 @@ export default function App() {
                       </button>
                     )}
                   </div>
+
+                  <div className="border-t border-gray-200 dark:border-gray-800/80 pt-2.5 mt-2.5 px-1">
+                    <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Support development</div>
+                    <p className="text-[10px] text-gray-600 dark:text-gray-450 leading-relaxed mb-2.5">
+                      Quantime is locally-run and free. If it saves you time, consider supporting the creator!
+                    </p>
+                    <a 
+                      href="https://buymeacoffee.com/rorrimaesu"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full py-1.5 text-center bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/20 hover:border-amber-500/35 rounded-lg text-[10px] font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer select-none"
+                    >
+                      <Coffee className="h-3.5 w-3.5 fill-amber-500/10" />
+                      <span>Buy me a coffee</span>
+                    </a>
+                  </div>
+
                 </div>
               )}
             </div>
@@ -2308,7 +2371,7 @@ export default function App() {
         <section className="flex-1">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 pb-2">
             <div className="flex items-center space-x-4">
-              <h2 className="text-lg font-semibold tracking-tight text-gray-900 dark:text-gray-100 flex items-center space-x-2">
+              <h2 className="text-lg font-semibold tracking-tight text-gray-100 dark:text-gray-100 flex items-center space-x-2">
                 <Calendar className="h-5 w-5 text-indigo-500 dark:text-indigo-400" />
                 <span>Planner</span>
               </h2>
@@ -2328,12 +2391,12 @@ export default function App() {
                       setSelectedDate(newDate);
                     }
                   }}
-                  className="p-1 rounded text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white transition-all hover:bg-gray-100 dark:hover:bg-gray-800 focus:outline-none"
+                  className="p-1 rounded text-gray-500 hover:text-gray-200 dark:text-gray-400 dark:hover:text-white transition-all hover:bg-gray-800 dark:hover:bg-gray-800 focus:outline-none"
                   title="Previous Month"
                 >
                   <ChevronLeft className="h-3.5 w-3.5" />
                 </button>
-                <span className="text-xs font-semibold px-2 text-gray-800 dark:text-gray-200 min-w-[90px] text-center">
+                <span className="text-xs font-semibold px-2 text-gray-200 dark:text-gray-200 min-w-[90px] text-center">
                   {visibleDate.toLocaleDateString([], { month: 'long', year: 'numeric' })}
                 </span>
                 <button 
@@ -2351,7 +2414,7 @@ export default function App() {
                       setSelectedDate(newDate);
                     }
                   }}
-                  className="p-1 rounded text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white transition-all hover:bg-gray-100 dark:hover:bg-gray-800 focus:outline-none"
+                  className="p-1 rounded text-gray-500 hover:text-gray-200 dark:text-gray-400 dark:hover:text-white transition-all hover:bg-gray-800 dark:hover:bg-gray-800 focus:outline-none"
                   title="Next Month"
                 >
                   <ChevronRight className="h-3.5 w-3.5" />
@@ -2523,12 +2586,17 @@ export default function App() {
                   return (
                     <div 
                       key={idx}
-                      onClick={() => setSelectedDate(cell.date)}
-                      className={`min-h-[46px] md:min-h-[64px] p-1.5 rounded-xl border flex flex-col items-center justify-between cursor-pointer transition-all hover:scale-[1.03] select-none ${
+                      onClick={() => {
+                        setSelectedDate(cell.date);
+                        if (!cell.isCurrentMonth) {
+                          setVisibleDate(new Date(cell.date.getFullYear(), cell.date.getMonth(), 1));
+                        }
+                      }}
+                      className={`min-h-[50px] md:min-h-[72px] p-1.5 rounded-xl flex flex-col items-center justify-between cursor-pointer select-none ${
                         !cell.isCurrentMonth 
-                          ? 'bg-transparent border-transparent text-gray-400 dark:text-gray-600 opacity-25 cursor-default pointer-events-none' 
-                          : 'bg-white/40 dark:bg-gray-900/10 border-gray-100 dark:border-gray-850 hover:bg-white/85 dark:hover:bg-gray-900/30'
-                      }`}
+                          ? 'calendar-cell calendar-cell-inactive text-gray-400 dark:text-gray-600' 
+                          : 'calendar-cell text-gray-800 dark:text-gray-200'
+                      } ${isSelected ? 'calendar-cell-selected' : ''}`}
                     >
                       <div className="flex items-center justify-center">
                         {isSelected ? (
@@ -2540,7 +2608,7 @@ export default function App() {
                             {cell.day}
                           </span>
                         ) : (
-                          <span className="text-[10px] font-bold text-gray-700 dark:text-gray-300">
+                          <span className={`text-[10px] font-bold ${!cell.isCurrentMonth ? 'text-gray-400 dark:text-gray-650' : 'text-gray-700 dark:text-gray-300'}`}>
                             {cell.day}
                           </span>
                         )}
@@ -2548,21 +2616,26 @@ export default function App() {
                       
                       <div className="flex justify-center space-x-1.5 w-full mt-1">
                         {cellTasks.slice(0, 3).map(t => {
-                          let dotClass = "bg-gray-400 dark:bg-gray-600";
-                          if (t.energy_level === 'crimson') dotClass = "bg-red-500";
-                          else if (t.energy_level === 'teal') dotClass = "bg-teal-500";
-                          else if (t.constraint_type === 'hard') dotClass = "bg-indigo-500";
+                          let dotClass = "bg-gray-400 dark:bg-gray-500";
+                          if (t.energy_level === 'crimson') dotClass = "bg-red-400 dark:bg-red-400";
+                          else if (t.energy_level === 'teal') dotClass = "bg-teal-400 dark:bg-teal-400";
+                          else if (t.constraint_type === 'hard') dotClass = "bg-indigo-400 dark:bg-indigo-400";
                           
                           return (
                             <span 
                               key={t.id} 
-                              className={`h-1 w-1 md:h-1.5 md:w-1.5 rounded-full ${dotClass}`} 
+                              className="h-1.5 w-1.5 rounded-full bg-current" 
+                              style={{
+                                backgroundColor: t.energy_level === 'crimson' ? 'rgba(239, 68, 68, 0.7)' :
+                                                 t.energy_level === 'teal' ? 'rgba(20, 184, 166, 0.7)' :
+                                                 t.constraint_type === 'hard' ? 'rgba(99, 102, 241, 0.7)' : 'rgba(156, 163, 175, 0.7)'
+                              }}
                               title={t.title}
                             />
                           );
                         })}
                         {cellTasks.length > 3 && (
-                          <span className="text-[7px] md:text-[8px] font-extrabold text-gray-500 dark:text-gray-400 leading-none">
+                          <span className="text-[8px] font-extrabold text-gray-500 dark:text-gray-400 leading-none">
                             +
                           </span>
                         )}
@@ -2579,7 +2652,7 @@ export default function App() {
           </div>
 
           {/* Timeline Cards */}
-          <div className="space-y-4 relative pl-4 border-l border-gray-800">
+          <div className="space-y-4 relative pl-4 border-l border-gray-200 dark:border-gray-800">
             {(() => {
               // Apply staged changes preview to the list if active
               const previewTasks = tasks.map(t => {
@@ -2605,8 +2678,8 @@ export default function App() {
               if (filteredTasks.length === 0) {
                 return (
                   <div className="text-center py-12 glass-panel rounded-xl">
-                    <Clock className="h-8 w-8 text-gray-600 mx-auto mb-2" />
-                    <p className="text-sm text-gray-400">
+                    <Clock className="h-8 w-8 text-gray-500 dark:text-gray-600 mx-auto mb-2" />
+                    <p className="text-sm text-gray-550 dark:text-gray-400">
                       {viewMode === 'calendar' ? 'No events scheduled for this day.' : 'No events scheduled. Use Add Task or Sync Calendar.'}
                     </p>
                   </div>
@@ -2630,7 +2703,7 @@ export default function App() {
                     <div key="time-indicator" className="relative my-2 py-1.5 flex items-center justify-center">
                       <div className="absolute left-[-21px] h-3 w-3 rounded-full bg-red-500 ring-4 ring-red-500/20 animate-pulse"></div>
                       <div className="w-full h-[1px] bg-gradient-to-r from-red-500/50 to-transparent"></div>
-                      <span className="absolute right-4 text-[9px] bg-red-950/80 border border-red-900 text-red-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
+                      <span className="absolute right-4 text-[9px] time-indicator-pill text-red-600 dark:text-red-400 px-2 py-0.5 rounded-full font-extrabold uppercase tracking-wider">
                         Current Time: {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>
@@ -2643,104 +2716,106 @@ export default function App() {
                 const isCompleted = task.status === 'completed';
                 const isExpanded = expandedTasks[task.id];
 
-                let cardClass = "bg-gray-900/40 border-gray-800 backdrop-blur-md text-gray-300 border-l-4 border-l-gray-500";
+                let cardClass = "task-card";
                 if (task.isPreviewGhost) {
-                  cardClass = "bg-indigo-950/15 border-indigo-500/50 border-dashed text-indigo-300 border-l-4 border-l-indigo-400 opacity-80 animate-pulse";
+                  cardClass = "task-card task-card-ghost animate-pulse";
                 } else if (isCompleted) {
-                  cardClass = "bg-gray-950/20 border-gray-950 text-gray-500 border-l-4 border-l-gray-700 opacity-60";
+                  cardClass = "task-card task-card-completed";
                 } else if (isCrimson) {
-                  cardClass = "bg-red-950/20 border-red-600/50 backdrop-blur-md shadow-sm shadow-red-950/20 text-red-200 border-l-4 border-l-red-600";
+                  cardClass = "task-card task-card-crimson";
                 } else if (isTeal) {
-                  cardClass = "bg-teal-950/20 border-teal-600/50 backdrop-blur-md shadow-sm shadow-teal-950/20 text-teal-200 border-l-4 border-l-teal-600";
+                  cardClass = "task-card task-card-teal";
                 }
 
                 elements.push(
                   <div 
                     key={task.id} 
-                    className={`relative p-4 rounded-xl transition-all hover:scale-[1.01] flex items-start space-x-4 border ${cardClass} float-ui`}
+                    className={`relative p-3.5 sm:p-4 rounded-xl flex items-start space-x-4 border ${cardClass}`}
                   >
-                    <div className={`absolute -left-[22px] top-5 h-3.5 w-3.5 rounded-full bg-darkspace border-2 ${
-                      task.isPreviewGhost ? 'border-indigo-400 bg-indigo-950' : isCompleted ? 'border-green-500 bg-green-500' : isCrimson ? 'border-red-600' : isTeal ? 'border-teal-600' : 'border-gray-500'
+                    <div className={`absolute -left-[22.5px] top-5 h-3.5 w-3.5 rounded-full bg-[#f8fafc] dark:bg-[#060709] border-2 ${
+                      task.isPreviewGhost ? 'border-indigo-400 bg-indigo-950' : isCompleted ? 'border-green-500 bg-green-500' : isCrimson ? 'border-red-650' : isTeal ? 'border-teal-600' : 'border-gray-400 dark:border-gray-650'
                     }`}></div>
                     
                     <button
                       type="button"
                       onClick={() => handleCompleteTask(task.id, task.status)}
-                      className="mt-0.5 focus:outline-none flex-shrink-0 animate-pulse"
+                      className="mt-0.5 p-1 rounded-full hover:bg-green-500/10 focus:outline-none flex-shrink-0 transition-all duration-200 hover:scale-[1.1]"
                       title={isCompleted ? "Mark Pending" : "Mark Completed"}
                     >
                       <CheckCircle className={`h-5 w-5 transition-all ${
-                        isCompleted ? 'text-green-500 fill-green-500/20' : 'text-gray-600 hover:text-green-400'
+                        isCompleted ? 'text-green-500 fill-green-500/20' : 'text-gray-400 dark:text-gray-600 hover:text-green-500'
                       }`} />
                     </button>
                     
-                    <div className="flex-1">
-                      <div className="flex justify-between items-start">
-                        <div className="cursor-pointer select-text flex-1" onClick={() => toggleTaskExpand(task.id)}>
-                          <h3 className={`font-semibold text-base hover:text-indigo-400 transition-all flex items-center space-x-1.5 ${
-                            isCompleted ? 'text-gray-500 line-through' : 'text-gray-100'
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2">
+                        <div className="cursor-pointer select-text min-w-0 flex-1" onClick={() => toggleTaskExpand(task.id)}>
+                          <h3 className={`font-semibold text-base hover:text-indigo-650 dark:hover:text-indigo-400 transition-all flex flex-wrap items-center gap-1.5 ${
+                            isCompleted ? 'text-gray-500 dark:text-gray-500 line-through font-normal' : 'text-gray-200 dark:text-gray-100'
                           }`}>
-                            <span>{task.title}</span>
+                            <span className="truncate max-w-[280px] sm:max-w-none">{task.title}</span>
                             {task.isPreviewGhost && (
-                              <span className="text-[9px] bg-indigo-950/80 border border-indigo-850 text-indigo-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
+                              <span className="text-[9px] bg-indigo-100 dark:bg-indigo-950/80 border border-indigo-200 dark:border-indigo-850 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
                                 Preview Slot
                               </span>
                             )}
                             {task.description && (
-                              <ChevronDown className={`h-3.5 w-3.5 text-gray-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                              <ChevronDown className={`h-3.5 w-3.5 text-gray-400 dark:text-gray-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                             )}
                           </h3>
                         </div>
-                        <div className="flex items-center space-x-2">
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                        <div className="flex items-center justify-between sm:justify-end space-x-2 w-full sm:w-auto mt-1 sm:mt-0">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                             task.constraint_type === 'hard' 
-                              ? 'bg-red-950/50 text-red-400 border border-red-900' 
-                              : 'bg-indigo-950/50 text-indigo-400 border border-indigo-900'
+                              ? 'bg-red-50/70 dark:bg-red-950/30 text-red-600 dark:text-red-400 border-red-100 dark:border-red-900/50' 
+                              : 'bg-indigo-50/70 dark:bg-indigo-950/30 text-indigo-600 dark:text-indigo-400 border-indigo-100 dark:border-indigo-900/50'
                           }`}>
                             {task.constraint_type.toUpperCase()}
                           </span>
-                          <button 
-                            type="button"
-                            onClick={() => handleEditTaskClick(task)}
-                            className="p-1 rounded text-gray-500 hover:text-indigo-400 hover:bg-gray-800/60 transition-all focus:outline-none"
-                            title="Edit Task"
-                          >
-                            <Edit className="h-3.5 w-3.5" />
-                          </button>
-                          <button 
-                            type="button"
-                            onClick={() => handleDeleteTask(task.id)}
-                            className="p-1 rounded text-gray-505 hover:text-red-400 hover:bg-gray-800/60 transition-all focus:outline-none"
-                            title="Delete Task"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          <div className="flex items-center space-x-1">
+                            <button 
+                              type="button"
+                              onClick={() => handleEditTaskClick(task)}
+                              className="p-1.5 rounded text-gray-450 dark:text-gray-500 hover:text-indigo-650 dark:hover:text-indigo-400 hover:bg-gray-200/50 dark:hover:bg-gray-800/60 transition-all focus:outline-none"
+                              title="Edit Task"
+                            >
+                              <Edit className="h-3.5 w-3.5" />
+                            </button>
+                            <button 
+                              type="button"
+                              onClick={() => handleDeleteTask(task.id)}
+                              className="p-1.5 rounded text-gray-450 dark:text-gray-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-gray-200/50 dark:hover:bg-gray-800/60 transition-all focus:outline-none"
+                              title="Delete Task"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                         </div>
                       </div>
                       
                       {task.description && isExpanded && (
-                        <p className="text-xs text-gray-400 mt-2 bg-black/35 p-3 rounded-lg border border-gray-800 whitespace-pre-wrap leading-relaxed animate-slide max-h-48 overflow-y-auto">
+                        <p className="text-xs text-gray-600 dark:text-gray-400 mt-2 bg-gray-50/60 dark:bg-black/25 p-3 rounded-lg border border-gray-150 dark:border-gray-850 whitespace-pre-wrap leading-relaxed animate-slide max-h-48 overflow-y-auto">
                           {task.description}
                         </p>
                       )}
                       
-                      <div className="flex items-center space-x-4 mt-3 text-xs text-gray-400">
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3 text-xs text-gray-500">
                         <span className="flex items-center space-x-1">
-                          <Clock className="h-3.5 w-3.5 text-gray-500" />
-                          <span>{formatTime(task.start_time)} - {formatTime(task.end_time)}</span>
+                          <Clock className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                          <span className="leading-none">{formatTime(task.start_time)} - {formatTime(task.end_time)}</span>
                         </span>
                         
                         {task.energy_level !== 'none' && (
                           <span className="flex items-center space-x-1">
-                            <Zap className={`h-3.5 w-3.5 ${isCompleted ? 'text-gray-600' : isCrimson ? 'text-red-400' : 'text-teal-400'}`} />
-                            <span className={isCompleted ? 'text-gray-500' : isCrimson ? 'text-red-400' : 'text-teal-400'}>
+                            <Zap className={`h-3.5 w-3.5 flex-shrink-0 ${isCompleted ? 'text-gray-500 dark:text-gray-600' : isCrimson ? 'text-red-500 dark:text-red-400' : 'text-teal-600 dark:text-teal-400'}`} />
+                            <span className={`leading-none ${isCompleted ? 'text-gray-500 dark:text-gray-500' : isCrimson ? 'text-red-600 dark:text-red-400' : 'text-teal-600 dark:text-teal-400'}`}>
                               {isCrimson ? 'High Study' : 'Low Reading'}
                             </span>
                           </span>
                         )}
 
                         {task.source_event_id && (
-                          <span className="text-[10px] text-gray-500 bg-gray-900/60 px-1.5 py-0.5 rounded border border-gray-800">
+                          <span className="text-[9px] font-bold tracking-wider uppercase text-gray-500 dark:text-gray-400 bg-gray-800 dark:bg-gray-900/60 px-1.5 py-0.5 rounded border border-gray-700/40 dark:border-gray-800 flex items-center h-4 flex-shrink-0 leading-none">
                             Google Synced
                           </span>
                         )}
@@ -2755,7 +2830,7 @@ export default function App() {
                   <div key="time-indicator" className="relative my-2 py-1.5 flex items-center justify-center">
                     <div className="absolute left-[-21px] h-3 w-3 rounded-full bg-red-500 ring-4 ring-red-500/20 animate-pulse"></div>
                     <div className="w-full h-[1px] bg-gradient-to-r from-red-500/50 to-transparent"></div>
-                    <span className="absolute right-4 text-[9px] bg-red-950/80 border border-red-900 text-red-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
+                    <span className="absolute right-4 text-[9px] time-indicator-pill text-red-600 dark:text-red-400 px-2 py-0.5 rounded-full font-extrabold uppercase tracking-wider">
                       Current Time: {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </span>
                   </div>
@@ -2794,14 +2869,14 @@ export default function App() {
           <div className="flex items-center space-x-2">
             <button 
               onClick={handleClearChat}
-              className="p-1 rounded hover:bg-gray-900 text-gray-400 hover:text-red-400 transition-all focus:outline-none"
+              className="p-1.5 rounded hover:bg-gray-800 text-gray-400 hover:text-red-400 transition-all focus:outline-none"
               title="Clear Chat Logs"
             >
               <Eraser className="h-4 w-4" />
             </button>
             <button 
               onClick={() => setIsChatExpanded(false)}
-              className="hidden md:flex p-1 rounded hover:bg-gray-900 text-gray-400 hover:text-white transition-all focus:outline-none"
+              className="hidden md:flex p-1.5 rounded hover:bg-gray-800 text-gray-400 hover:text-white transition-all focus:outline-none"
               title="Collapse Sidebar"
             >
               <ChevronDown className="h-4 w-4 rotate-90" />
@@ -2811,8 +2886,9 @@ export default function App() {
 
         {/* Messages Stream */}
         <div className="flex-1 overflow-y-auto space-y-4 pr-1 mb-4">
-          {chats.map((chat) => {
+          {chats.map((chat, chatIdx) => {
             const isAgent = chat.sender === 'agent';
+            const precedingUserMsg = isAgent && chatIdx > 0 ? chats[chatIdx - 1] : null;
             const proposalMatch = chat.text ? chat.text.match(/<schedule-proposal tx="([^"]+)">/) : null;
             const txId = proposalMatch ? proposalMatch[1] : null;
             const proposalData = txId ? proposalsMap[txId] : null;
@@ -2827,16 +2903,29 @@ export default function App() {
             return (
               <div 
                 key={chat.id} 
-                className={`flex flex-col ${isAgent ? 'items-start' : 'items-end'}`}
+                className={`flex flex-col chat-message-entry ${isAgent ? 'items-start' : 'items-end'}`}
               >
                 <div 
-                  className={`p-3.5 rounded-2xl max-w-[85%] text-sm ${
+                  className={`p-3.5 rounded-2xl max-w-[80%] sm:max-w-[70%] text-sm ${
                     isAgent 
-                      ? 'glass-panel text-gray-100 rounded-tl-none border-l-2 border-l-indigo-500' 
-                      : 'bg-indigo-600 text-white rounded-tr-none shadow-md shadow-indigo-950'
+                      ? chat.status === 'pending'
+                        ? 'loading-bubble-active text-gray-100 rounded-tl-none border-l-2 border-l-indigo-500'
+                        : 'glass-panel text-gray-100 rounded-tl-none border-l-2 border-l-indigo-500 shadow-sm shadow-gray-250 dark:shadow-none' 
+                      : 'bg-indigo-600 text-white rounded-tr-none shadow-md shadow-indigo-600/15'
                   }`}
                 >
-                  {cleanText ? renderMessageContent(cleanText) : isAgent ? <p className="leading-relaxed">Generating schedule optimizations...</p> : null}
+                  {cleanText ? renderMessageContent(cleanText) : isAgent ? (
+                    <div className="flex flex-col items-start space-y-2 py-1.5 min-w-[170px]">
+                      <div className="orb-container">
+                        <div className="thinking-ring-outer"></div>
+                        <div className="thinking-ring-inner"></div>
+                        <div className="thinking-orb"></div>
+                      </div>
+                      <p className="text-xs shimmer-text font-bold tracking-wide italic leading-relaxed">
+                        {getLoadingMessage(chat, precedingUserMsg)}
+                      </p>
+                    </div>
+                  ) : null}
                   
                   {isAgent && proposalData && (
                     <div className="mt-4 p-4 rounded-xl bg-gray-900 border border-gray-800 space-y-3 shadow-lg max-w-full text-left">

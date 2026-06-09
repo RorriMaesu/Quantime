@@ -271,3 +271,358 @@
 a, button, select, input, textarea {
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
+
+/* Premium Calendar Grid Custom Component Classes */
+.calendar-cell {
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(15, 23, 42, 0.05);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dark .calendar-cell {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.035);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.calendar-cell:hover {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(79, 70, 229, 0.25);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.05);
+}
+
+.dark .calendar-cell:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(124, 105, 230, 0.25);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.calendar-cell-selected {
+  border-color: var(--accent-primary) !important;
+  background: rgba(79, 70, 229, 0.04) !important;
+  box-shadow: 0 0 10px rgba(79, 70, 229, 0.08);
+}
+
+.dark .calendar-cell-selected {
+  background: rgba(124, 105, 230, 0.05) !important;
+  border-color: var(--accent-primary) !important;
+  box-shadow: 0 0 14px rgba(124, 105, 230, 0.12);
+}
+
+.calendar-cell-inactive {
+  opacity: 0.3;
+}
+
+.calendar-cell-inactive:hover {
+  opacity: 0.75;
+}
+
+/* Premium Task Card Component Classes */
+.task-card {
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(15, 23, 42, 0.05);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  color: var(--text-secondary);
+  border-left-width: 4px !important;
+  border-left-color: rgba(156, 163, 175, 0.4) !important;
+}
+
+.dark .task-card {
+  background: rgba(11, 12, 16, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-left-color: rgba(156, 163, 175, 0.25) !important;
+}
+
+.task-card:hover {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(79, 70, 229, 0.2);
+  box-shadow: var(--shadow-card);
+}
+
+.dark .task-card:hover {
+  background: rgba(11, 12, 16, 0.5);
+  border-color: rgba(124, 105, 230, 0.2);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.35);
+}
+
+/* Crimson task cards */
+.task-card-crimson {
+  background: rgba(254, 242, 242, 0.6) !important;
+  border-color: rgba(239, 68, 68, 0.15) !important;
+  border-left-color: rgba(239, 68, 68, 0.6) !important;
+}
+
+.dark .task-card-crimson {
+  background: rgba(220, 38, 38, 0.02) !important;
+  border-color: rgba(220, 38, 38, 0.1) !important;
+  border-left-color: rgba(220, 38, 38, 0.6) !important;
+}
+
+.task-card-crimson:hover {
+  background: rgba(254, 242, 242, 0.85) !important;
+}
+
+.dark .task-card-crimson:hover {
+  background: rgba(220, 38, 38, 0.04) !important;
+  border-color: rgba(220, 38, 38, 0.25) !important;
+}
+
+/* Teal task cards */
+.task-card-teal {
+  background: rgba(240, 253, 250, 0.6) !important;
+  border-color: rgba(20, 184, 166, 0.15) !important;
+  border-left-color: rgba(20, 184, 166, 0.6) !important;
+}
+
+.dark .task-card-teal {
+  background: rgba(13, 148, 136, 0.025) !important;
+  border-color: rgba(13, 148, 136, 0.1) !important;
+  border-left-color: rgba(13, 148, 136, 0.6) !important;
+}
+
+.task-card-teal:hover {
+  background: rgba(240, 253, 250, 0.85) !important;
+}
+
+.dark .task-card-teal:hover {
+  background: rgba(13, 148, 136, 0.04) !important;
+  border-color: rgba(13, 148, 136, 0.25) !important;
+}
+
+/* Completed task cards */
+.task-card-completed {
+  background: rgba(255, 255, 255, 0.35) !important;
+  border-color: rgba(15, 23, 42, 0.03) !important;
+  border-left-color: rgba(156, 163, 175, 0.3) !important;
+  opacity: 0.5;
+}
+
+.dark .task-card-completed {
+  background: rgba(11, 12, 16, 0.15) !important;
+  border-color: rgba(255, 255, 255, 0.015) !important;
+  border-left-color: rgba(156, 163, 175, 0.2) !important;
+  opacity: 0.55;
+}
+
+/* Ghost preview slots */
+.task-card-ghost {
+  background: rgba(238, 242, 255, 0.4) !important;
+  border-color: rgba(99, 102, 241, 0.3) !important;
+  border-style: dashed !important;
+  border-left-color: rgba(99, 102, 241, 0.6) !important;
+  opacity: 0.75;
+}
+
+.dark .task-card-ghost {
+  background: rgba(99, 102, 241, 0.015) !important;
+  border-color: rgba(99, 102, 241, 0.25) !important;
+  border-style: dashed !important;
+  border-left-color: rgba(99, 102, 241, 0.6) !important;
+  opacity: 0.8;
+}
+
+/* Glassmorphic Time Indicator Pill */
+.time-indicator-pill {
+  background: rgba(254, 242, 242, 0.85);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.05);
+}
+
+.dark .time-indicator-pill {
+  background: rgba(220, 38, 38, 0.06);
+  border: 1px solid rgba(239, 68, 68, 0.15);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+/* Chatbot Orchestrator Enhancements */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.chat-message-entry {
+  animation: fadeInUp 0.25s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.shimmer-text {
+  background: linear-gradient(90deg, var(--text-muted) 25%, var(--text-secondary) 50%, var(--text-muted) 75%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: shimmer 1.8s infinite linear;
+}
+
+/* Sequenced neural wave bounce */
+.thinking-dot {
+  animation: bounceDot 1.4s infinite ease-in-out both;
+}
+
+@keyframes bounceDot {
+  0%, 80%, 100% { 
+    transform: scale(0.65);
+    opacity: 0.35;
+  } 
+  40% { 
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Living AI Core Orb & Ring Animations */
+.orb-container {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 6px;
+  margin-top: 4px;
+}
+
+.thinking-orb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #818cf8 0%, #6366f1 70%, #4f46e5 100%);
+  box-shadow: 0 0 15px rgba(99, 102, 241, 0.5), inset 0 0 6px rgba(255, 255, 255, 0.4);
+  animation: orbPulse 1.8s infinite ease-in-out;
+}
+
+.dark .thinking-orb {
+  background: radial-gradient(circle, #a78bfa 0%, #7c3aed 70%, #5b21b6 100%);
+  box-shadow: 0 0 20px rgba(124, 58, 237, 0.7), inset 0 0 6px rgba(255, 255, 255, 0.5);
+}
+
+.thinking-ring-outer {
+  position: absolute;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1.5px solid transparent;
+  border-top-color: #6366f1;
+  border-bottom-color: #10b981;
+  filter: drop-shadow(0 0 3px rgba(99, 102, 241, 0.65));
+  animation: spinClockwise 2.2s infinite linear;
+}
+
+.dark .thinking-ring-outer {
+  border-top-color: #a78bfa;
+  border-bottom-color: #34d399;
+  filter: drop-shadow(0 0 4px rgba(167, 139, 250, 0.75));
+}
+
+.thinking-ring-inner {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1.5px solid transparent;
+  border-left-color: #d946ef;
+  border-right-color: #3b82f6;
+  filter: drop-shadow(0 0 3px rgba(217, 70, 239, 0.65));
+  animation: spinCounterClockwise 1.6s infinite linear;
+}
+
+.dark .thinking-ring-inner {
+  border-left-color: #f472b6;
+  border-right-color: #60a5fa;
+  filter: drop-shadow(0 0 4px rgba(244, 114, 182, 0.75));
+}
+
+/* Card breathing pulse animation */
+.loading-bubble-active {
+  animation: fadeInUp 0.25s cubic-bezier(0.4, 0, 0.2, 1) forwards, bubbleBreath 3.6s infinite ease-in-out;
+}
+
+@keyframes bubbleBreath {
+  0%, 100% {
+    border-color: rgba(99, 102, 241, 0.12);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.02);
+  }
+  50% {
+    border-color: rgba(99, 102, 241, 0.25);
+    box-shadow: 0 4px 20px rgba(99, 102, 241, 0.07);
+  }
+}
+
+.dark .loading-bubble-active {
+  animation: fadeInUp 0.25s cubic-bezier(0.4, 0, 0.2, 1) forwards, darkBubbleBreath 3.6s infinite ease-in-out;
+}
+
+@keyframes darkBubbleBreath {
+  0%, 100% {
+    border-color: rgba(255, 255, 255, 0.03);
+    background: rgba(11, 12, 16, 0.35);
+  }
+  50% {
+    border-color: rgba(124, 105, 230, 0.15);
+    background: rgba(11, 12, 16, 0.45);
+    box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.04), 0 12px 40px -4px rgba(124, 105, 230, 0.08);
+  }
+}
+
+@keyframes orbPulse {
+  0%, 100% {
+    transform: scale(0.92);
+    box-shadow: 0 0 12px rgba(99, 102, 241, 0.45);
+  }
+  50% {
+    transform: scale(1.18);
+    box-shadow: 0 0 28px rgba(99, 102, 241, 0.85), 0 0 12px rgba(16, 185, 129, 0.45);
+  }
+}
+
+@keyframes spinClockwise {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes spinCounterClockwise {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
+
+
+
+
+
