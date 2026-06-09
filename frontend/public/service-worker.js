@@ -1,7 +1,7 @@
 // frontend/public/service-worker.js
 // Quantime PWA Service Worker with FCM and Direct Firestore Updates
 
-const CACHE_NAME = 'quantime-cache-v1.5.4';
+const CACHE_NAME = 'quantime-cache-v1.5.5';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
