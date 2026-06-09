@@ -29,7 +29,8 @@ import {
   Square,
   Sun,
   Moon,
-  Coffee
+  Coffee,
+  LayoutGrid
 } from 'lucide-react';
 
 // Optional: Import Firebase SDK components if initialized client-side
@@ -78,6 +79,15 @@ const LogoIcon = ({ className = "h-6 w-6" }) => (
 
 export default function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem("quantime_theme") || "dark");
+  
+  const getGnosysDashboardUrl = () => {
+    const stored = localStorage.getItem('gnosys_server_origin');
+    if (stored) return stored;
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      return 'http://localhost:8020';
+    }
+    return 'https://rorrimaesu.github.io/Gnosys-AI/';
+  };
   
   useEffect(() => {
     if (theme === "dark") {
@@ -2012,6 +2022,14 @@ export default function App() {
             >
               <MessageSquare className="h-4 w-4" />
             </button>
+            <a 
+              href={getGnosysDashboardUrl()}
+              className="h-9 px-3 rounded-lg bg-indigo-500/10 border border-indigo-500/20 hover:bg-indigo-500/20 hover:border-indigo-500/35 text-indigo-400 hover:text-indigo-300 transition-all flex items-center justify-center space-x-1.5 text-xs font-semibold select-none shadow-sm cursor-pointer"
+              title="Return to Gnosys AI Dashboard"
+            >
+              <LayoutGrid className="h-4 w-4" />
+              <span className="hidden sm:inline">Gnosys AI Dashboard</span>
+            </a>
             <a 
               href="https://buymeacoffee.com/rorrimaesu"
               target="_blank"
