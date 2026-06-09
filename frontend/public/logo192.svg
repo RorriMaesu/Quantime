@@ -1,21 +1,59 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
   <defs>
-    <linearGradient id="glow" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#6366f1" />
+    <!-- Core Brand Gradient -->
+    <linearGradient id="glow" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00f2fe" />
+      <stop offset="50%" stop-color="#4facfe" />
       <stop offset="100%" stop-color="#a855f7" />
     </linearGradient>
-    <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
-      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#6366f1" flood-opacity="0.3" />
+    
+    <!-- Glowing Quantum Particle Gradient -->
+    <radialGradient id="particle-grad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="30%" stop-color="#00f2fe" />
+      <stop offset="100%" stop-color="#4facfe" />
+    </radialGradient>
+    
+    <!-- Neon Drop Shadow Filter for depth -->
+    <filter id="neon-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feComponentTransfer in="blur" result="glow1">
+        <feFuncA type="linear" slope="0.6" />
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode in="glow1" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
     </filter>
   </defs>
-  <rect width="192" height="192" rx="40" fill="#0b0c10" />
-  <g filter="url(#shadow)">
-    <!-- Outer Ring -->
-    <circle cx="96" cy="96" r="64" fill="none" stroke="url(#glow)" stroke-width="6" stroke-dasharray="10 6" />
-    <!-- Clock Hands/Hourglass -->
-    <path d="M76 60 H116 L96 96 Z" fill="url(#glow)" opacity="0.8" />
-    <path d="M76 132 H116 L96 96 Z" fill="url(#glow)" />
-    <!-- Center Node -->
-    <circle cx="96" cy="96" r="6" fill="#ffffff" />
+
+  <!-- Deep space dark background scaled to 192px -->
+  <rect width="192" height="192" rx="38" fill="#090a0f" />
+
+  <g transform="scale(0.375)" filter="url(#neon-glow)">
+    <!-- The main Q loop with evenodd fill rule to hollow out the hourglass -->
+    <path d="M 256 86
+             A 170 170 0 1 0 256 426
+             A 170 170 0 1 0 256 86 Z
+             M 196 160
+             C 226 210 236 240 236 256
+             C 236 272 226 302 196 352
+             H 316
+             C 286 302 276 272 276 256
+             C 276 240 286 210 316 160
+             Z"
+          fill="url(#glow)"
+          fill-rule="evenodd" />
+
+    <!-- Orbital Tail representing the sweep of Q and Quantum path -->
+    <path d="M 180 370
+             C 240 440 360 450 410 360"
+          fill="none"
+          stroke="url(#glow)"
+          stroke-width="22"
+          stroke-linecap="round" />
+
+    <!-- Quantum Particle (AI Nucleus) at the tip of the Q tail -->
+    <circle cx="410" cy="360" r="22" fill="url(#particle-grad)" />
   </g>
 </svg>
