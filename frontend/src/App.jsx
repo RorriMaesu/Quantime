@@ -93,6 +93,22 @@ export default function App() {
     localStorage.setItem("quantime_theme", theme);
   }, [theme]);
 
+  const [isEngineOnline, setIsEngineOnline] = useState(true);
+
+  useEffect(() => {
+    const checkConnection = async () => {
+      try {
+        const resp = await fetch("/health");
+        setIsEngineOnline(resp.ok);
+      } catch (err) {
+        setIsEngineOnline(false);
+      }
+    };
+    checkConnection();
+    const interval = setInterval(checkConnection, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
   const [userId, setUserId] = useState("user");
   const [userName, setUserName] = useState("User");
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
@@ -174,8 +190,9 @@ export default function App() {
     try {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       let wsUrl;
-      if (window.location.port === "5173") {
-        wsUrl = `${protocol}//${window.location.hostname}:8000/api/voice-chat`;
+      if (window.location.port === "5173" || window.location.port === (import.meta.env.VITE_FRONTEND_PORT || "5173")) {
+        const backendPort = import.meta.env.VITE_BACKEND_PORT || "8000";
+        wsUrl = `${protocol}//${window.location.hostname}:${backendPort}/api/voice-chat`;
       } else {
         wsUrl = `${protocol}//${window.location.host}/api/voice-chat`;
       }
@@ -1960,7 +1977,14 @@ export default function App() {
   const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth < 768;
 
   return (
-    <div className="flex flex-col md:flex-row h-screen w-screen overflow-hidden pb-16 md:pb-0">
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-black text-white">
+      {!isEngineOnline && (
+        <div className="w-full bg-red-950/90 text-red-200 border-b border-red-800 text-[11px] font-medium py-1.5 px-4 text-center flex items-center justify-center space-x-2 shadow-inner z-[9999] transition-all">
+          <span className="text-sm">⚠️</span>
+          <span>Quantime Local Engine is Offline. The app is running in offline cached mode. Please start the background service.</span>
+        </div>
+      )}
+      <div className="flex flex-col md:flex-row flex-1 overflow-hidden pb-16 md:pb-0 relative">
       
       {/* LEFT PANEL: TIMELINE & TASK INGESTION */}
       <div className={`w-full h-full flex flex-col overflow-y-auto p-4 md:p-6 border-r border-gray-800 transition-all duration-300 ${
@@ -3877,6 +3901,7 @@ export default function App() {
       
 
 
+    </div>
     </div>
   );
 }

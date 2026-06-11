@@ -99,6 +99,8 @@ fastapi_proc = None
 vite_proc = None
 tunnel_proc = None
 running = True
+backend_port = 8000
+frontend_port = 5173
 
 def create_image():
     # Try to load the brand logo from frontend public assets
@@ -171,6 +173,50 @@ def kill_processes_on_ports(ports):
         except Exception:
             pass
 
+def is_quantime_process_on_port(port):
+    if os.name != 'nt':
+        return False
+    try:
+        output = subprocess.check_output(f"netstat -ano | findstr LISTENING | findstr :{port}", shell=True).decode()
+        for line in output.strip().split('\n'):
+            parts = line.split()
+            if len(parts) >= 5 and parts[3] == 'LISTENING':
+                local_addr = parts[1]
+                if local_addr.endswith(f":{port}") or f":{port}" in local_addr:
+                    pid = parts[-1]
+                    if int(pid) == os.getpid():
+                        continue
+                    # Query process path and command line in PowerShell
+                    cmd = f"powershell -NoProfile -Command \"(Get-Process -Id {pid}).Path; (Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}').CommandLine\""
+                    proc_info = subprocess.check_output(
+                        cmd,
+                        shell=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    ).decode()
+                    if 'quantime' in proc_info.lower():
+                        return True
+    except Exception:
+        pass
+    return False
+
+def get_free_port(start_port):
+    port = start_port
+    while True:
+        # Check if we should kill an orphaned Quantime process on this port
+        if is_quantime_process_on_port(port):
+            kill_processes_on_ports([port])
+            time.sleep(0.5)
+        
+        # Check if port is free
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind(('127.0.0.1', port))
+            s.close()
+            return port
+        except socket.error:
+            # Port is in use by someone else, try next port
+            port += 1
+
 def find_node():
     import shutil
     portable = os.path.join(base_dir, "frontend", "node-portable", "node.exe")
@@ -200,14 +246,26 @@ def get_tunnel_subdomain():
     return "quantime-scheduler-green"
 
 def start_services():
-    global fastapi_proc, vite_proc, tunnel_proc
+    global fastapi_proc, vite_proc, tunnel_proc, backend_port, frontend_port
     creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-    
-    # Pre-clean any existing/orphaned processes listening on Quantime ports
-    kill_processes_on_ports([8000, 5173])
     
     # 0. Check and start Ollama in the background
     check_and_start_ollama()
+    
+    # Resolve backend and frontend ports dynamically
+    backend_port = get_free_port(8000)
+    os.environ["VITE_BACKEND_PORT"] = str(backend_port)
+    
+    frontend_dist_path = os.path.join(base_dir, "frontend", "dist")
+    is_prod = os.path.exists(frontend_dist_path)
+    
+    if not is_prod:
+        frontend_port = get_free_port(5173)
+        os.environ["VITE_FRONTEND_PORT"] = str(frontend_port)
+        tunnel_port = str(frontend_port)
+    else:
+        frontend_port = backend_port
+        tunnel_port = str(backend_port)
     
     # 1. Start FastAPI server using pythonw.exe
     pythonw_exe = os.path.join(base_dir, "backend", ".venv", "Scripts", "pythonw.exe")
@@ -221,16 +279,12 @@ def start_services():
         log_file = subprocess.DEVNULL
         
     fastapi_proc = subprocess.Popen(
-        [pythonw_exe, "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "30"],
+        [pythonw_exe, "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", str(backend_port), "--timeout-keep-alive", "30"],
         cwd=os.path.join(base_dir, "backend"),
         creationflags=creation_flags,
         stdout=log_file,
         stderr=log_file
     )
-    
-    # Check if we are in production mode (frontend/dist exists)
-    frontend_dist_path = os.path.join(base_dir, "frontend", "dist")
-    is_prod = os.path.exists(frontend_dist_path)
     
     node_bin = find_node()
     lt_js = os.path.join(base_dir, "frontend", "node_modules", "localtunnel", "bin", "lt.js")
@@ -247,17 +301,14 @@ def start_services():
             vite_log = subprocess.DEVNULL
             
         vite_proc = subprocess.Popen(
-            [node_bin, vite_js],
+            [node_bin, vite_js, "--port", str(frontend_port)],
             cwd=os.path.join(base_dir, "frontend"),
             creationflags=creation_flags,
             stdout=vite_log,
             stderr=vite_log
         )
-        
-        tunnel_port = "5173"
     else:
         vite_proc = None
-        tunnel_port = "8000"
         
     # 4. Start Localtunnel gateway
     if os.path.exists(lt_js):
@@ -277,9 +328,8 @@ def start_services():
         )
 
 def open_dashboard(icon, item):
-    frontend_dist_path = os.path.join(base_dir, "frontend", "dist")
-    port = "8000" if os.path.exists(frontend_dist_path) else "5173"
-    webbrowser.open(f"http://localhost:{port}")
+    global frontend_port
+    webbrowser.open(f"http://localhost:{frontend_port}")
 
 def restart_services(icon, item):
     global fastapi_proc, vite_proc, tunnel_proc
@@ -292,11 +342,11 @@ def restart_services(icon, item):
     icon.notify("Quantime background services successfully restarted.", title="Quantime Services")
 
 def cleanup():
-    global fastapi_proc, vite_proc, tunnel_proc
+    global fastapi_proc, vite_proc, tunnel_proc, backend_port, frontend_port
     kill_process_tree(fastapi_proc)
     kill_process_tree(vite_proc)
     kill_process_tree(tunnel_proc)
-    kill_processes_on_ports([8000, 5173])
+    kill_processes_on_ports([backend_port, frontend_port])
 
 def on_exit(icon, item):
     global running
@@ -305,12 +355,13 @@ def on_exit(icon, item):
     cleanup()
 
 def open_dashboard_when_ready():
-    # Wait for backend (8000) to start accepting connections
+    global backend_port, frontend_port
+    # Wait for backend to start accepting connections
     for _ in range(30):
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(0.5)
-            s.connect(('127.0.0.1', 8000))
+            s.connect(('127.0.0.1', backend_port))
             s.close()
             break
         except Exception:
@@ -320,24 +371,23 @@ def open_dashboard_when_ready():
     is_prod = os.path.exists(frontend_dist_path)
     
     if not is_prod:
-        # Wait for frontend (5173) to start accepting connections
+        # Wait for frontend to start accepting connections
         for _ in range(30):
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.settimeout(0.5)
-                s.connect(('127.0.0.1', 5173))
+                s.connect(('127.0.0.1', frontend_port))
                 s.close()
                 break
             except Exception:
                 time.sleep(0.5)
             
     time.sleep(0.5)
-    port = "8000" if is_prod else "5173"
-    webbrowser.open(f"http://localhost:{port}")
+    webbrowser.open(f"http://localhost:{frontend_port}")
 
 def monitor_localtunnel():
     """Periodically health-checks the public LocalTunnel endpoint and restarts it if it goes offline or returns 502/503."""
-    global tunnel_proc
+    global tunnel_proc, backend_port, frontend_port
     time.sleep(15)  # Wait for initial startup
     
     log_dir = os.path.join(os.path.expanduser("~"), ".quantime")
@@ -398,7 +448,7 @@ def monitor_localtunnel():
             time.sleep(1)
             
             frontend_dist_path = os.path.join(base_dir, "frontend", "dist")
-            port = "8000" if os.path.exists(frontend_dist_path) else "5173"
+            port = str(backend_port) if os.path.exists(frontend_dist_path) else str(frontend_port)
             
             creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             node_bin = find_node()
