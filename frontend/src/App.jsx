@@ -1977,7 +1977,7 @@ export default function App() {
   const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth < 768;
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-black text-white">
+    <div className="flex flex-col h-screen w-screen overflow-hidden">
       {!isEngineOnline && (
         <div className="w-full bg-red-950/90 text-red-200 border-b border-red-800 text-[11px] font-medium py-1.5 px-4 text-center flex items-center justify-center space-x-2 shadow-inner z-[9999] transition-all">
           <span className="text-sm">⚠️</span>
