@@ -7,6 +7,8 @@ import webbrowser
 import threading
 import socket
 import pystray
+import atexit
+import signal
 from PIL import Image, ImageDraw
 
 _lock_socket = None
@@ -141,6 +143,34 @@ def kill_process_tree(proc):
     except Exception:
         pass
 
+def kill_processes_on_ports(ports):
+    if os.name != 'nt':
+        return
+    for port in ports:
+        try:
+            # Find PIDs listening on specified port
+            output = subprocess.check_output(f"netstat -ano | findstr LISTENING | findstr :{port}", shell=True).decode()
+            pids = set()
+            for line in output.strip().split('\n'):
+                parts = line.split()
+                if len(parts) >= 5 and parts[3] == 'LISTENING':
+                    local_addr = parts[1]
+                    if local_addr.endswith(f":{port}") or f":{port}" in local_addr:
+                        pid = parts[-1]
+                        if int(pid) != os.getpid():
+                            pids.add(int(pid))
+            for pid in pids:
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", str(pid)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+        except subprocess.CalledProcessError:
+            pass
+        except Exception:
+            pass
+
 def find_node():
     import shutil
     portable = os.path.join(base_dir, "frontend", "node-portable", "node.exe")
@@ -172,6 +202,9 @@ def get_tunnel_subdomain():
 def start_services():
     global fastapi_proc, vite_proc, tunnel_proc
     creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+    
+    # Pre-clean any existing/orphaned processes listening on Quantime ports
+    kill_processes_on_ports([8000, 5173])
     
     # 0. Check and start Ollama in the background
     check_and_start_ollama()
@@ -258,13 +291,18 @@ def restart_services(icon, item):
     start_services()
     icon.notify("Quantime background services successfully restarted.", title="Quantime Services")
 
+def cleanup():
+    global fastapi_proc, vite_proc, tunnel_proc
+    kill_process_tree(fastapi_proc)
+    kill_process_tree(vite_proc)
+    kill_process_tree(tunnel_proc)
+    kill_processes_on_ports([8000, 5173])
+
 def on_exit(icon, item):
     global running
     running = False
     icon.stop()
-    kill_process_tree(fastapi_proc)
-    kill_process_tree(vite_proc)
-    kill_process_tree(tunnel_proc)
+    cleanup()
 
 def open_dashboard_when_ready():
     # Wait for backend (8000) to start accepting connections
@@ -405,6 +443,17 @@ def main():
     threading.Thread(target=monitor_localtunnel, daemon=True).start()
     
     icon.run()
+
+# Register normal exit handler
+atexit.register(cleanup)
+
+# Register signal handlers for clean shutdown
+def signal_handler(signum, frame):
+    cleanup()
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 if __name__ == "__main__":
     main()

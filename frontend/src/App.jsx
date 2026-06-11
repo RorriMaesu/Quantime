@@ -1977,7 +1977,7 @@ export default function App() {
               </h1>
               <div className="flex items-center space-x-2">
                 <p className="text-xs text-indigo-400 font-medium">Local-First Scheduling Engine</p>
-                <span className="text-[10px] text-gray-500 font-mono bg-gray-900/60 px-1.5 py-0.5 rounded border border-gray-800">v1.5.6</span>
+                <span className="text-[10px] text-gray-500 font-mono bg-gray-900/60 px-1.5 py-0.5 rounded border border-gray-800">v1.5.7</span>
                 {showStatusBadge && (
                   <div 
                     className={`flex items-center space-x-1 px-1.5 py-0.5 rounded text-[9px] font-medium border transition-all duration-500 ${

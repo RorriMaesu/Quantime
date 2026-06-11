@@ -156,7 +156,7 @@ def get_localtunnel_url() -> Optional[str]:
     return None
 
 # Initialize FastAPI Application
-app = FastAPI(title="Quantime Gateway API", version="1.5.6")
+app = FastAPI(title="Quantime Gateway API", version="1.5.7")
 
 # Configure Cross-Origin Resource Sharing (CORS) for development UI access
 origins = [
